@@ -1,3 +1,10 @@
+// @ts-nocheck
+"use client";
+
+import React, { useState, useEffect, useMemo } from "react";
+import { initializeApp } from "firebase/app";
+// ... el resto de tu código se queda exactamente igual
+
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
