@@ -981,7 +981,7 @@ export default function MiPolladaPage() {
             { id: "RESUMEN", label: "Caja", icon: BarChart3 },
           ].map((tab) => {
             const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
+            const isActive = activeTab === (tab.id as TabId);
             return (
               <button
                 key={tab.id}
