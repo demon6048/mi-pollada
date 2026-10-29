@@ -961,11 +961,11 @@ export default function MiPolladaPage() {
 
         {activeTab === "CONFIG" && (
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-stone-200 space-y-4">
-            <h2 className="text-lg font-extrabold">Datos del Evento</h2>
+            <h2 className="text-lg font-extrabold text-stone-900">Datos del Evento</h2>
             <div className="grid sm:grid-cols-2 gap-4 text-sm">
-              <input type="text" value={eventConfig.name} onChange={(e) => setEventConfig({ ...eventConfig, name: e.target.value })} className="p-2.5 border rounded-xl" placeholder="Nombre" />
-              <input type="text" value={eventConfig.address} onChange={(e) => setEventConfig({ ...eventConfig, address: e.target.value })} className="p-2.5 border rounded-xl" placeholder="Dirección" />
-              <input type="number" value={pollosRecibidos} onChange={(e) => setPollosRecibidos(parseInt(e.target.value, 10) || 0)} className="p-2.5 border rounded-xl font-bold" placeholder="Platos" />
+              <input type="text" value={eventConfig.name} onChange={(e) => { const next = { ...eventConfig, name: e.target.value }; setEventConfig(next); saveToCloud({ eventConfig: next }); }} className="p-2.5 border rounded-xl" placeholder="Nombre" />
+              <input type="text" value={eventConfig.address} onChange={(e) => { const next = { ...eventConfig, address: e.target.value }; setEventConfig(next); saveToCloud({ eventConfig: next }); }} className="p-2.5 border rounded-xl" placeholder="Dirección" />
+              <input type="number" value={pollosRecibidos} onChange={(e) => { const val = parseInt(e.target.value, 10) || 0; setPollosRecibidos(val); saveToCloud({ pollosRecibidos: val }); }} className="p-2.5 border rounded-xl font-bold" placeholder="Platos" />
             </div>
           </div>
         )}
