@@ -1,3 +1,8 @@
+"use client";
+
+import React, { useState, useEffect, useMemo } from "react";
+import { initializeApp } from "firebase/app";
+// ... existing code ...
 import React, { useState, useEffect, useMemo } from "react";
 import { initializeApp } from "firebase/app";
 import {
