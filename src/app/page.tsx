@@ -5,7 +5,6 @@ import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
 import {
   getAuth,
   signInAnonymously,
-  signInWithCustomToken,
   onAuthStateChanged,
   type Auth,
   type User,
@@ -36,8 +35,6 @@ import {
   Info,
   Music,
   ShoppingBag,
-  Plus,
-  RotateCcw,
 } from "lucide-react";
 
 type AssignmentStatus = "DISPONIBLE" | "RESERVADO" | "CONFIRMADO";
@@ -47,16 +44,6 @@ type QuickPayMode = "EFECTIVO_CAJA" | "YAPE" | "EFECTIVO_VENDEDOR" | "SOLO_SEPAR
 type MoneyDestination = "EFECTIVO_CAJA" | "YAPE_EVENTO" | "VENDEDOR";
 type ExpenseOrigin = "EFECTIVO_CAJA" | "YAPE_EVENTO" | "POR_PAGAR";
 type ExpenseCategory = "COMPRA_BARRA" | "GASTO_FIESTA" | "PAGO_POLLOS";
-type TabId =
-  | "VENDER"
-  | "TICKETS"
-  | "ENTREGAR"
-  | "FIESTA"
-  | "CAJA"
-  | "RESUMEN"
-  | "VENDEDORES"
-  | "RECORDATORIOS"
-  | "CONFIG";
 
 interface TicketItem {
   id: string;
@@ -226,7 +213,7 @@ export default function MiPolladaPage() {
   const [newEventNameModal, setNewEventNameModal] = useState<boolean>(false);
   const [newEventTitleInput, setNewEventTitleInput] = useState<string>("");
 
-  const [activeTab, setActiveTab] = useState<TabId>("VENDER");
+  const [activeTab, setActiveTab] = useState<string>("VENDER");
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [showExportModal, setShowExportModal] = useState<boolean>(false);
 
@@ -260,7 +247,6 @@ export default function MiPolladaPage() {
   const [fondoInicialCajaCents, setFondoInicialCajaCents] = useState<number>(10000);
   const [conteoFisicoRealCents, setConteoFisicoRealCents] = useState<number>(10000);
 
-  // Asignar tokens QR reales solo en el cliente al montar (evita error de prerender con Math.random)
   useEffect(() => {
     setTickets((prev) =>
       prev.map((t) => ({
@@ -398,16 +384,12 @@ export default function MiPolladaPage() {
     const reservadosSinPago = tickets.filter((t) => t.assignmentStatus === "RESERVADO" && t.paymentStatus !== "PAGADO").length;
     const pagadosCount = tickets.filter((t) => t.paymentStatus === "PAGADO").length;
     const entregadosCount = tickets.filter((t) => t.deliveryStatus === "ENTREGADO").length;
-    const pagadosPendientesEntrega = tickets.filter((t) => t.paymentStatus === "PAGADO" && t.deliveryStatus === "PENDIENTE").length;
 
     const cobradoTicketsCents = tickets.reduce((acc, t) => acc + (t.paidCents || 0), 0);
-    const faltaCobrarSeparadosCents = reservadosSinPago * eventConfig.unitPriceCents;
     const ingresosBarraCents = barItems.reduce((acc, item) => acc + (item.totalRevenueCents || 0), 0);
 
     const entradasEfectivoCajaCents = payments.filter((p) => p.destination === "EFECTIVO_CAJA").reduce((acc, p) => acc + p.amountCents, 0);
     const entradasYapeCents = payments.filter((p) => p.destination === "YAPE_EVENTO").reduce((acc, p) => acc + p.amountCents, 0);
-
-    const faltaRendirVendedoresCents = sellers.reduce((acc, s) => acc + Math.max(0, s.cashInHandCents - s.settledCents), 0);
 
     const salidasEfectivoCajaCents = expenses.filter((e) => e.payOrigin === "EFECTIVO_CAJA").reduce((acc, e) => acc + e.amountCents, 0);
     const salidasYapeCents = expenses.filter((e) => e.payOrigin === "YAPE_EVENTO").reduce((acc, e) => acc + e.amountCents, 0);
@@ -427,16 +409,13 @@ export default function MiPolladaPage() {
       reservadosSinPago,
       pagadosCount,
       entregadosCount,
-      pagadosPendientesEntrega,
       cobradoTicketsCents,
-      faltaCobrarSeparadosCents,
       ingresosBarraCents,
       ingresosTotalesEventoCents,
       entradasEfectivoCajaCents,
       salidasEfectivoCajaCents,
       efectivoDisponibleCajaCents,
       saldoDisponibleYapeCents,
-      faltaRendirVendedoresCents,
       gastosTotalesCents,
       diferenciaCajaCents,
       platosQuedanFisicamente,
@@ -981,11 +960,11 @@ export default function MiPolladaPage() {
             { id: "RESUMEN", label: "Caja", icon: BarChart3 },
           ].map((tab) => {
             const Icon = tab.icon;
-            const isActive = activeTab === (tab.id as TabId);
+            const isActive = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as TabId)}
+                onClick={() => setActiveTab(tab.id)}
                 className={`flex flex-col items-center justify-center py-2.5 text-xs font-extrabold transition ${
                   isActive ? "text-orange-700 bg-orange-50 border-t-4 border-orange-600" : "text-stone-600"
                 }`}
@@ -1000,3 +979,4 @@ export default function MiPolladaPage() {
     </div>
   );
 }
+```
