@@ -2,9 +2,6 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { initializeApp } from "firebase/app";
-// ... existing code ...
-import React, { useState, useEffect, useMemo } from "react";
-import { initializeApp } from "firebase/app";
 import {
   getAuth,
   signInAnonymously,
@@ -27,9 +24,7 @@ import {
   Settings,
   Search,
   Copy,
-  Printer,
   Download,
-  Terminal,
   FolderPlus,
   Cloud,
   X,
@@ -158,7 +153,6 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("VENDER");
   const [toast, setToast] = useState(null);
   const [showExportModal, setShowExportModal] = useState(false);
-  const [copiedStep, setCopiedStep] = useState(null);
 
   const notify = (msg, type = "info") => {
     setToast({ msg, type, id: Date.now() });
@@ -358,26 +352,18 @@ export default function App() {
   const [selectedBarProductId, setSelectedBarProductId] = useState("BAR-GASEOSA");
   const [addedBarUnits, setAddedBarUnits] = useState("24");
 
-  const [newBarItemName, setNewBarItemName] = useState("");
-  const [newBarItemPriceSoles, setNewBarItemPriceSoles] = useState("");
-
   // ==========================================================================
   // 4. CÁLCULOS EN TIEMPO REAL
   // ==========================================================================
   const metrics = useMemo(() => {
-    const totalCapacity = tickets.length;
     const disponibles = tickets.filter((t) => t.assignmentStatus === "DISPONIBLE").length;
     const reservadosSinPago = tickets.filter(
       (t) => t.assignmentStatus === "RESERVADO" && t.paymentStatus !== "PAGADO"
     ).length;
     const pagadosCount = tickets.filter((t) => t.paymentStatus === "PAGADO").length;
     const entregadosCount = tickets.filter((t) => t.deliveryStatus === "ENTREGADO").length;
-    const pagadosPendientesEntrega = tickets.filter(
-      (t) => t.paymentStatus === "PAGADO" && t.deliveryStatus === "PENDIENTE"
-    ).length;
-
+    
     const cobradoTicketsCents = tickets.reduce((acc, t) => acc + (t.paidCents || 0), 0);
-    const faltaCobrarSeparadosCents = reservadosSinPago * eventConfig.unitPriceCents;
     const ingresosBarraCents = barItems.reduce((acc, item) => acc + (item.totalRevenueCents || 0), 0);
 
     const entradasEfectivoCajaCents = payments
@@ -388,20 +374,12 @@ export default function App() {
       .filter((p) => p.destination === "YAPE_EVENTO")
       .reduce((acc, p) => acc + p.amountCents, 0);
 
-    const faltaRendirVendedoresCents = sellers.reduce(
-      (acc, s) => acc + Math.max(0, s.cashInHandCents - s.settledCents), 0
-    );
-
     const salidasEfectivoCajaCents = expenses
       .filter((e) => e.payOrigin === "EFECTIVO_CAJA")
       .reduce((acc, e) => acc + e.amountCents, 0);
 
     const salidasYapeCents = expenses
       .filter((e) => e.payOrigin === "YAPE_EVENTO")
-      .reduce((acc, e) => acc + e.amountCents, 0);
-
-    const gastosPorPagarCents = expenses
-      .filter((e) => e.payOrigin === "POR_PAGAR")
       .reduce((acc, e) => acc + e.amountCents, 0);
 
     const gastosTotalesCents = expenses.reduce((acc, e) => acc + e.amountCents, 0);
@@ -417,56 +395,38 @@ export default function App() {
     const gananciaNetaActualCents = ingresosTotalesEventoCents - gastosTotalesCents;
 
     return {
-      totalCapacity,
       disponibles,
       reservadosSinPago,
       pagadosCount,
       entregadosCount,
-      pagadosPendientesEntrega,
       cobradoTicketsCents,
-      faltaCobrarSeparadosCents,
       ingresosBarraCents,
       ingresosTotalesEventoCents,
       entradasEfectivoCajaCents,
       salidasEfectivoCajaCents,
       efectivoDisponibleCajaCents,
       saldoDisponibleYapeCents,
-      faltaRendirVendedoresCents,
-      gastosPorPagarCents,
       gastosTotalesCents,
       diferenciaCajaCents,
       platosQuedanFisicamente,
       gananciaNetaActualCents,
     };
-  }, [
-    tickets, barItems, payments, expenses, sellers,
-    pollosRecibidos, fondoInicialCajaCents, conteoFisicoRealCents, eventConfig,
-  ]);
+  }, [tickets, barItems, payments, expenses, sellers, pollosRecibidos, fondoInicialCajaCents, conteoFisicoRealCents, eventConfig]);
 
   // ==========================================================================
   // 5. ACCIONES OPERATIVAS
   // ==========================================================================
   const handleRegistrarTicket = () => {
-    const nums = ticketNumInput
-      .split(",")
-      .map((s) => parseInt(s.trim(), 10))
-      .filter((n) => !isNaN(n) && n >= 1 && n <= 250);
-
+    const nums = ticketNumInput.split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n) && n >= 1 && n <= 250);
     const uniqueNums = Array.from(new Set(nums));
-    if (uniqueNums.length === 0) {
-      notify("Ingresa un número de ticket válido del 1 al 250.", "error");
-      return;
-    }
+    if (uniqueNums.length === 0) { notify("Ingresa un número válido del 1 al 250.", "error"); return; }
 
     const ocupados = tickets.filter(
       (t) => uniqueNums.includes(t.num) && t.assignmentStatus !== "DISPONIBLE" &&
         !(t.assignmentStatus === "RESERVADO" && quickPayMode !== "SOLO_SEPARAR")
     );
 
-    if (ocupados.length > 0) {
-      notify(`El ticket N.º ${ocupados[0].code} ya está registrado para ${ocupados[0].buyerName}.`, "error");
-      return;
-    }
+    if (ocupados.length > 0) { notify(`El ticket N.º ${ocupados[0].code} ya está registrado.`, "error"); return; }
 
     const totalCobrarCents = uniqueNums.length * eventConfig.unitPriceCents;
     const isSeparar = quickPayMode === "SOLO_SEPARAR";
@@ -485,7 +445,6 @@ export default function App() {
         paymentMethod: isSeparar ? "" : quickPayMode,
         deliveryStatus: !isSeparar && deliverImmediately ? "ENTREGADO" : t.deliveryStatus,
         deliveredAt: !isSeparar && deliverImmediately ? nowTime : t.deliveredAt,
-        deliveredBy: !isSeparar && deliverImmediately ? "Venta Directa" : t.deliveredBy,
       };
     });
 
@@ -494,326 +453,124 @@ export default function App() {
     let nextConteo = conteoFisicoRealCents;
 
     if (!isSeparar) {
-      const dest = quickPayMode === "EFECTIVO_CAJA"
-          ? "EFECTIVO_CAJA"
-          : quickPayMode === "YAPE"
-          ? "YAPE_EVENTO"
-          : "VENDEDOR";
+      const dest = quickPayMode === "EFECTIVO_CAJA" ? "EFECTIVO_CAJA" : quickPayMode === "YAPE" ? "YAPE_EVENTO" : "VENDEDOR";
+      nextPayments = [{
+        id: `PAY-${Date.now()}`,
+        description: `Ticket N.º ${uniqueNums.join(", ")}`,
+        amountCents: totalCobrarCents,
+        destination: dest,
+        time: nowTime,
+      }, ...payments];
 
-      nextPayments = [
-        {
-          id: `PAY-${Date.now()}`,
-          description: `Ticket(s) N.º ${uniqueNums.map((n) => String(n).padStart(3, "0")).join(", ")} (${buyerNameInput.trim() || "Cliente"})`,
-          amountCents: totalCobrarCents,
-          destination: dest,
-          time: nowTime,
-        },
-        ...payments,
-      ];
-
-      if (dest === "EFECTIVO_CAJA") {
-        nextConteo += totalCobrarCents;
-      } else if (dest === "VENDEDOR") {
-        nextSellers = sellers.map((s) =>
-          s.name === sellerNameInput ? { ...s, cashInHandCents: s.cashInHandCents + totalCobrarCents } : s
-        );
-      }
+      if (dest === "EFECTIVO_CAJA") nextConteo += totalCobrarCents;
+      else if (dest === "VENDEDOR") nextSellers = sellers.map((s) => s.name === sellerNameInput ? { ...s, cashInHandCents: s.cashInHandCents + totalCobrarCents } : s);
     }
 
-    setTickets(nextTickets);
-    setPayments(nextPayments);
-    setSellers(nextSellers);
-    setConteoFisicoRealCents(nextConteo);
-
-    saveToCloud({
-      tickets: nextTickets,
-      payments: nextPayments,
-      sellers: nextSellers,
-      conteoFisicoRealCents: nextConteo,
-    });
+    setTickets(nextTickets); setPayments(nextPayments); setSellers(nextSellers); setConteoFisicoRealCents(nextConteo);
+    saveToCloud({ tickets: nextTickets, payments: nextPayments, sellers: nextSellers, conteoFisicoRealCents: nextConteo });
 
     const nextFree = nextTickets.find((t) => t.assignmentStatus === "DISPONIBLE");
     if (nextFree) setTicketNumInput(String(nextFree.num));
-    setBuyerNameInput("");
-    setBuyerPhoneInput("");
-
-    notify(
-      isSeparar
-        ? `Ticket(s) separado(s). Falta pagar ${formatPEN(totalCobrarCents)}.`
-        : `¡Venta registrada! +${formatPEN(totalCobrarCents)} (${quickPayMode}).`,
-      "success"
-    );
+    setBuyerNameInput(""); setBuyerPhoneInput("");
+    notify(isSeparar ? "Ticket separado con éxito." : "Venta registrada con éxito.", "success");
   };
 
   const handleCobrarTicketSeparado = (ticketNum, metodo = "EFECTIVO_CAJA") => {
     const target = tickets.find((t) => t.num === ticketNum);
     if (!target || target.paymentStatus === "PAGADO") return;
-
     const nowTime = new Date().toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" });
     const monto = target.agreedPriceCents;
 
-    const nextTickets = tickets.map((t) =>
-      t.num === ticketNum
-        ? {
-            ...t,
-            assignmentStatus: "CONFIRMADO",
-            paymentStatus: "PAGADO",
-            paidCents: monto,
-            paymentMethod: metodo,
-          }
-        : t
-    );
-
-    const nextPayments = [
-      {
-        id: `PAY-${Date.now()}`,
-        description: `Cobro Ticket N.º ${target.code} (${target.buyerName})`,
-        amountCents: monto,
-        destination: metodo === "YAPE" ? "YAPE_EVENTO" : "EFECTIVO_CAJA",
-        time: nowTime,
-      },
-      ...payments,
-    ];
-
+    const nextTickets = tickets.map((t) => t.num === ticketNum ? { ...t, assignmentStatus: "CONFIRMADO", paymentStatus: "PAGADO", paidCents: monto, paymentMethod: metodo } : t);
+    const nextPayments = [{ id: `PAY-${Date.now()}`, description: `Cobro Ticket N.º ${target.code}`, amountCents: monto, destination: metodo === "YAPE" ? "YAPE_EVENTO" : "EFECTIVO_CAJA", time: nowTime }, ...payments];
     const nextConteo = metodo === "EFECTIVO_CAJA" ? conteoFisicoRealCents + monto : conteoFisicoRealCents;
 
-    setTickets(nextTickets);
-    setPayments(nextPayments);
-    setConteoFisicoRealCents(nextConteo);
-
-    if (inspectedTicket && inspectedTicket.num === ticketNum) {
-      setInspectedTicket({ ...inspectedTicket, assignmentStatus: "CONFIRMADO", paymentStatus: "PAGADO", paidCents: monto });
-    }
-
+    setTickets(nextTickets); setPayments(nextPayments); setConteoFisicoRealCents(nextConteo);
+    if (inspectedTicket?.num === ticketNum) setInspectedTicket({ ...inspectedTicket, assignmentStatus: "CONFIRMADO", paymentStatus: "PAGADO", paidCents: monto });
     saveToCloud({ tickets: nextTickets, payments: nextPayments, conteoFisicoRealCents: nextConteo });
-
-    notify(`Ticket N.º ${target.code} cobrado (${formatPEN(monto)} en ${metodo === "YAPE" ? "Yape" : "Efectivo"}).`, "success");
+    notify("Cobro registrado exitosamente.", "success");
   };
 
   const handleEntregarPlato = (ticketNum) => {
     const target = tickets.find((t) => t.num === ticketNum);
-    if (!target) return;
-
-    if (target.deliveryStatus === "ENTREGADO") {
-      notify(`ALERTA: El ticket N.º ${target.code} YA FUE ENTREGADO a las ${target.deliveredAt}.`, "error");
-      return;
-    }
-    if (target.paymentStatus !== "PAGADO") {
-      notify(`El ticket N.º ${target.code} aún FALTA PAGAR (S/ 15.00). Cóbralo primero con el botón de al lado.`, "warning");
-      return;
-    }
-
+    if (!target || target.deliveryStatus === "ENTREGADO") return;
+    if (target.paymentStatus !== "PAGADO") { notify("FALTA PAGAR.", "warning"); return; }
+    
     const nowTime = new Date().toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" });
-
-    const nextTickets = tickets.map((t) =>
-      t.num === ticketNum
-        ? { ...t, deliveryStatus: "ENTREGADO", deliveredAt: nowTime, deliveredBy: "Despacho" }
-        : t
-    );
-
+    const nextTickets = tickets.map((t) => t.num === ticketNum ? { ...t, deliveryStatus: "ENTREGADO", deliveredAt: nowTime } : t);
+    
     setTickets(nextTickets);
     saveToCloud({ tickets: nextTickets });
-    notify(`¡Plato entregado! Ticket N.º ${target.code} (${target.buyerName}) marcado como ENTREGADO.`, "success");
+    notify("Plato entregado con éxito.", "success");
   };
 
   const handleVenderProductoBarra = (itemId, metodo = "EFECTIVO_CAJA") => {
     const target = barItems.find((i) => i.id === itemId);
-    if (!target) return;
-    if (target.stock <= 0) {
-      notify(`No queda stock registrado de ${target.name}. Registra una compra en la pestaña «Fiesta y Gastos».`, "warning");
-      return;
-    }
-
+    if (!target || target.stock <= 0) { notify("Sin stock.", "warning"); return; }
+    
     const nowTime = new Date().toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" });
-
-    const nextBar = barItems.map((i) =>
-      i.id === itemId
-        ? { ...i, stock: i.stock - 1, soldQty: i.soldQty + 1, totalRevenueCents: i.totalRevenueCents + i.unitPriceCents }
-        : i
-    );
-
-    const nextPayments = [
-      {
-        id: `BARPAY-${Date.now()}`,
-        description: `Venta Barra: 1x ${target.name}`,
-        amountCents: target.unitPriceCents,
-        destination: metodo === "YAPE" ? "YAPE_EVENTO" : "EFECTIVO_CAJA",
-        time: nowTime,
-      },
-      ...payments,
-    ];
-
+    const nextBar = barItems.map((i) => i.id === itemId ? { ...i, stock: i.stock - 1, soldQty: i.soldQty + 1, totalRevenueCents: i.totalRevenueCents + i.unitPriceCents } : i);
+    const nextPayments = [{ id: `BARPAY-${Date.now()}`, description: `Barra: ${target.name}`, amountCents: target.unitPriceCents, destination: metodo === "YAPE" ? "YAPE_EVENTO" : "EFECTIVO_CAJA", time: nowTime }, ...payments];
     const nextConteo = metodo === "EFECTIVO_CAJA" ? conteoFisicoRealCents + target.unitPriceCents : conteoFisicoRealCents;
 
-    setBarItems(nextBar);
-    setPayments(nextPayments);
-    setConteoFisicoRealCents(nextConteo);
-
+    setBarItems(nextBar); setPayments(nextPayments); setConteoFisicoRealCents(nextConteo);
     saveToCloud({ barItems: nextBar, payments: nextPayments, conteoFisicoRealCents: nextConteo });
-
-    notify(`Vendido 1 ${target.name} (+${formatPEN(target.unitPriceCents)} en ${metodo === "YAPE" ? "Yape" : "Caja"}).`, "success");
+    notify(`Vendido 1 ${target.name}.`, "success");
   };
 
   const handleRegistrarCompraOGastoConCaja = () => {
     const amountCents = Math.round((parseFloat(expenseAmountSoles) || 0) * 100);
-    if (amountCents <= 0) {
-      notify("Ingresa un monto válido en soles.", "error");
-      return;
-    }
+    if (amountCents <= 0) return;
 
-    if (expensePayOrigin === "EFECTIVO_CAJA" && amountCents > metrics.efectivoDisponibleCajaCents) {
-      notify(`Atención: En Caja solo hay ${formatPEN(metrics.efectivoDisponibleCajaCents)} en efectivo disponible.`, "warning");
-    }
-
-    const nowTime = new Date().toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" });
     let finalConcept = expenseConcept.trim();
     let nextBar = [...barItems];
 
     if (expenseType === "COMPRA_BARRA") {
-      const targetBar = barItems.find((b) => b.id === selectedBarProductId);
       const unitsToAdd = parseInt(addedBarUnits, 10) || 0;
-      finalConcept = finalConcept || `Compra Barra: +${unitsToAdd} und. de ${targetBar ? targetBar.name : "Producto"}`;
-      if (unitsToAdd > 0) {
-        nextBar = barItems.map((b) =>
-          b.id === selectedBarProductId ? { ...b, stock: b.stock + unitsToAdd } : b
-        );
-      }
-    } else if (expenseType === "PAGO_POLLOS") {
-      finalConcept = finalConcept || "Pago a proveedor de pollos preparados";
+      finalConcept = finalConcept || `Compra Barra`;
+      if (unitsToAdd > 0) nextBar = barItems.map((b) => b.id === selectedBarProductId ? { ...b, stock: b.stock + unitsToAdd } : b);
     } else {
-      finalConcept = finalConcept || "Gasto de Fiesta / DJ / Local";
+      finalConcept = finalConcept || "Gasto Evento";
     }
 
-    const newExp = {
-      id: `EXP-${Date.now()}`,
-      type: expenseType,
-      concept: finalConcept,
-      amountCents,
-      payOrigin: expensePayOrigin,
-      time: nowTime,
-    };
-
+    const newExp = { id: `EXP-${Date.now()}`, type: expenseType, concept: finalConcept, amountCents, payOrigin: expensePayOrigin, time: new Date().toLocaleTimeString("es-PE") };
     const nextExpenses = [newExp, ...expenses];
     const nextConteo = expensePayOrigin === "EFECTIVO_CAJA" ? conteoFisicoRealCents - amountCents : conteoFisicoRealCents;
 
-    setExpenses(nextExpenses);
-    setBarItems(nextBar);
-    setConteoFisicoRealCents(nextConteo);
-    setExpenseConcept("");
-    setExpenseAmountSoles("");
-
+    setExpenses(nextExpenses); setBarItems(nextBar); setConteoFisicoRealCents(nextConteo); setExpenseConcept(""); setExpenseAmountSoles("");
     saveToCloud({ expenses: nextExpenses, barItems: nextBar, conteoFisicoRealCents: nextConteo });
-
-    notify(
-      `Registrado: ${finalConcept} por ${formatPEN(amountCents)} (${
-        expensePayOrigin === "EFECTIVO_CAJA" ? "Descontado de Caja"
-        : expensePayOrigin === "YAPE_EVENTO" ? "Descontado de Yape"
-        : "Anotado por pagar"
-      }).`,
-      "success"
-    );
+    notify("Salida de dinero registrada.", "success");
   };
 
   const handleCrearNuevoEvento = async () => {
-    if (!newEventTitleInput.trim()) {
-      notify("Escribe un nombre para la nueva actividad.", "error");
-      return;
-    }
+    if (!newEventTitleInput.trim()) return;
     const slug = `pollada-${Date.now()}`;
-    const prefix = `P${eventsList.length + 1}`;
-    const newConfig = { ...eventConfig, prefix, name: newEventTitleInput.trim(), capacity: 250 };
-    const freshTickets = createInitial250Tickets(prefix);
-    const freshBar = createInitialBarItems();
-
-    setCurrentEventId(slug);
-    setEventConfig(newConfig);
-    setTickets(freshTickets);
-    setBarItems(freshBar);
-    setPayments([]);
-    setExpenses([]);
-    setPollosRecibidos(250);
-    setFondoInicialCajaCents(10000);
-    setConteoFisicoRealCents(10000);
-    setNewEventNameModal(false);
-    setNewEventTitleInput("");
-
-    if (user && db) {
-      const eventDocRef = doc(db, "artifacts", appId, "public", "data", "pollada_events", slug);
-      await setDoc(eventDocRef, {
-        eventConfig: newConfig,
-        tickets: JSON.stringify(freshTickets),
-        barItems: JSON.stringify(freshBar),
-        payments: JSON.stringify([]),
-        expenses: JSON.stringify([]),
-        sellers: JSON.stringify(sellers),
-        pollosRecibidos: 250,
-        fondoInicialCajaCents: 10000,
-        conteoFisicoRealCents: 10000,
-        updatedAt: Date.now(),
-      });
-    }
-    notify(`Nueva actividad «${newConfig.name}» creada con 250 tickets limpios.`, "success");
+    const newConfig = { ...eventConfig, name: newEventTitleInput.trim() };
+    const freshTickets = createInitial250Tickets("P2");
+    
+    setCurrentEventId(slug); setEventConfig(newConfig); setTickets(freshTickets); setBarItems(createInitialBarItems());
+    setPayments([]); setExpenses([]); setPollosRecibidos(250); setFondoInicialCajaCents(10000); setConteoFisicoRealCents(10000);
+    setNewEventNameModal(false); setNewEventTitleInput("");
+    notify("Nueva actividad creada.", "success");
   };
 
   const generateCSVText = () => {
-    const header = "Nro_Ticket,Comprador,Celular,Vendedor,Estado_Reserva,Estado_Pago,Monto_Pagado_Soles,Medio_Pago,Estado_Entrega,Hora_Entrega\n";
-    const rows = tickets.map(
-      (t) =>
-        `${t.code},"${t.buyerName || "Disponible"}","${t.buyerPhone || ""}","${t.sellerName}",${t.assignmentStatus},${t.paymentStatus},${( (t.paidCents || 0) / 100 ).toFixed(2)},${t.paymentMethod || "-"},${t.deliveryStatus},"${t.deliveredAt || "-"}"`
-    ).join("\n");
-    return header + rows;
-  };
-
-  const handleDescargarCSV = () => {
-    try {
-      const csvContent = "\uFEFF" + generateCSVText();
-      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", `Reporte_250_Tickets_${eventConfig.name.replace(/\s+/g, "_")}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setShowExportModal(true);
-      notify("Exportación de los 250 tickets lista. También puedes copiar la tabla aquí mismo.", "success");
-    } catch (e) {
-      setShowExportModal(true);
-    }
-  };
-
-  const copyToClipboard = (text, id) => {
-    navigator.clipboard.writeText(text);
-    setCopiedStep(id);
-    setTimeout(() => setCopiedStep(null), 2000);
-    notify("Copiado al portapapeles.", "success");
+    return "Nro_Ticket,Comprador,Estado\n" + tickets.map((t) => `${t.code},"${t.buyerName}",${t.paymentStatus}`).join("\n");
   };
 
   const filteredTickets = useMemo(() => {
     return tickets.filter((t) => {
       if (gridFilterStatus === "DISPONIBLE" && t.assignmentStatus !== "DISPONIBLE") return false;
-      if (gridFilterStatus === "FALTA_PAGAR" && !(t.assignmentStatus === "RESERVADO" && t.paymentStatus !== "PAGADO")) return false;
       if (gridFilterStatus === "PAGADO" && t.paymentStatus !== "PAGADO") return false;
-      if (gridFilterStatus === "FALTA_RECOGER" && !(t.paymentStatus === "PAGADO" && t.deliveryStatus === "PENDIENTE")) return false;
-      if (gridFilterStatus === "ENTREGADO" && t.deliveryStatus !== "ENTREGADO") return false;
-
-      if (searchTicketQuery.trim() !== "" && !t.code.includes(searchTicketQuery.trim()) && !(t.buyerName || "").toLowerCase().includes(searchTicketQuery.toLowerCase())) {
-        return false;
-      }
+      if (searchTicketQuery.trim() !== "" && !t.code.includes(searchTicketQuery.trim())) return false;
       return true;
     });
   }, [tickets, gridFilterStatus, searchTicketQuery]);
 
   const deliveryList = useMemo(() => {
     const q = deliveryQuery.trim().toLowerCase();
-    if (!q) {
-      return tickets.filter((t) => t.assignmentStatus !== "DISPONIBLE" && t.deliveryStatus === "PENDIENTE").slice(0, 8);
-    }
-    return tickets.filter((t) =>
-      t.code.toLowerCase().includes(q) ||
-      (t.buyerName && t.buyerName.toLowerCase().includes(q)) ||
-      t.qrToken.toLowerCase().includes(q)
-    ).slice(0, 8);
+    if (!q) return tickets.filter((t) => t.assignmentStatus !== "DISPONIBLE" && t.deliveryStatus === "PENDIENTE").slice(0, 8);
+    return tickets.filter((t) => t.code.toLowerCase().includes(q) || t.qrToken.toLowerCase().includes(q)).slice(0, 8);
   }, [tickets, deliveryQuery]);
 
   return (
@@ -821,312 +578,123 @@ export default function App() {
       <header className="bg-gradient-to-r from-orange-700 via-orange-600 to-red-700 text-white shadow-md sticky top-0 z-30">
         <div className="max-w-6xl mx-auto px-4 py-3 flex flex-wrap justify-between items-center gap-3">
           <div className="flex items-center gap-3">
-            <div className="bg-white/15 p-2 rounded-xl">
-              <Utensils className="w-6 h-6 text-amber-200" />
-            </div>
+            <div className="bg-white/15 p-2 rounded-xl"><Utensils className="w-6 h-6 text-amber-200" /></div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wider bg-emerald-900/90 text-emerald-100 px-2.5 py-0.5 rounded-full border border-emerald-400/40">
-                  <Cloud className="w-3 h-3" />
-                  {syncStatus === "EN_VIVO" ? "Firebase Sincronizado en Vivo" : "Conectando..."}
-                </span>
-                <span className="text-[11px] text-orange-100">
-                  250 Tickets (S/ 15) • Costo S/ 9
-                </span>
+                <span className="flex items-center gap-1 text-[10px] font-extrabold uppercase bg-emerald-900/90 px-2.5 py-0.5 rounded-full"><Cloud className="w-3 h-3" /> Firebase Sincronizado</span>
               </div>
-              <h1 className="text-lg sm:text-xl font-extrabold tracking-tight mt-0.5">
-                {eventConfig.name}
-              </h1>
+              <h1 className="text-lg font-extrabold">{eventConfig.name}</h1>
             </div>
           </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center bg-black/25 rounded-xl px-2.5 py-1.5 text-xs">
-              <span className="text-orange-100 mr-1.5">Actividad:</span>
-              <select
-                value={currentEventId}
-                onChange={(e) => setCurrentEventId(e.target.value)}
-                className="bg-transparent font-bold text-white focus:outline-none cursor-pointer"
-              >
-                {eventsList.map((ev) => (
-                  <option key={ev.id} value={ev.id} className="text-stone-900">
-                    {ev.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={() => setNewEventNameModal(true)}
-                title="Crear nueva actividad / pollada"
-                className="ml-2 bg-white/20 hover:bg-white/30 p-1 rounded-lg"
-              >
-                <FolderPlus className="w-3.5 h-3.5 text-white" />
-              </button>
-            </div>
-
-            <button
-              onClick={handleDescargarCSV}
-              className="flex items-center gap-1.5 text-xs font-extrabold bg-white text-orange-900 hover:bg-orange-50 px-3 py-1.5 rounded-xl shadow-sm transition"
-            >
-              <Download className="w-3.5 h-3.5" />
-              Exportar 250 Tickets
-            </button>
+          <div className="flex gap-2">
+            <button onClick={() => setNewEventNameModal(true)} className="bg-white/20 p-2 rounded-xl"><FolderPlus className="w-4 h-4" /></button>
+            <button onClick={() => setShowExportModal(true)} className="flex items-center gap-1.5 bg-white text-orange-900 text-xs font-bold px-3 py-1.5 rounded-xl"><Download className="w-4 h-4"/> CSV</button>
           </div>
         </div>
-
-        <div className="bg-orange-950/40 border-t border-white/10">
-          <div className="max-w-6xl mx-auto px-4 py-1.5 flex items-center gap-2 overflow-x-auto no-scrollbar">
-            {[
-              { id: "FIESTA", label: "Fiesta, Barra y Gastos", icon: Music },
-              { id: "VENDEDORES", label: "Rendición Vendedores", icon: Users },
-              { id: "RECORDATORIOS", label: "WhatsApp", icon: MessageCircle },
-              { id: "CONFIG", label: "Datos del Evento", icon: Settings },
-            ].map((item) => {
-              const Icon = item.icon;
-              const active = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveTab(item.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap transition ${
-                    active ? "bg-white text-orange-900 shadow-sm" : "text-orange-100 hover:bg-white/10"
-                  }`}
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  {item.label}
-                </button>
-              );
-            })}
+        <div className="bg-orange-950/40">
+          <div className="max-w-6xl mx-auto px-4 py-2 flex gap-2 overflow-x-auto">
+            {[{ id: "FIESTA", label: "Gastos/Fiesta", icon: Music }, { id: "CONFIG", label: "Configurar", icon: Settings }].map((i) => (
+              <button key={i.id} onClick={() => setActiveTab(i.id)} className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${activeTab === i.id ? "bg-white text-orange-900" : "text-white"}`}><i.icon className="w-3.5 h-3.5"/> {i.label}</button>
+            ))}
           </div>
         </div>
       </header>
 
       {toast && (
         <div className="max-w-6xl mx-auto px-4 mt-3">
-          <div
-            className={`p-3 rounded-xl border flex justify-between items-center shadow-sm ${
-              toast.type === "error" ? "bg-red-50 border-red-300 text-red-900"
-                : toast.type === "warning" ? "bg-amber-50 border-amber-300 text-amber-900"
-                : "bg-emerald-50 border-emerald-300 text-emerald-900"
-            }`}
-          >
-            <div className="flex items-center gap-2 text-xs sm:text-sm font-bold">
-              <Info className="w-4 h-4 shrink-0" />
-              <span>{toast.msg}</span>
-            </div>
-            <button onClick={() => setToast(null)} className="text-xs font-extrabold underline ml-4">OK</button>
+          <div className="p-3 rounded-xl border bg-emerald-50 border-emerald-300 flex justify-between items-center text-sm font-bold">
+            <div className="flex items-center gap-2"><Info className="w-4 h-4" /> {toast.msg}</div>
+            <button onClick={() => setToast(null)} className="underline">OK</button>
           </div>
         </div>
       )}
 
       {newEventNameModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-5 space-y-4 shadow-xl">
-            <h3 className="font-extrabold text-lg text-stone-900">Crear Nueva Actividad</h3>
-            <p className="text-xs text-stone-600">Guarda la actual y abre un nuevo padrón de 250 tickets.</p>
-            <input
-              type="text"
-              placeholder="Ej. Pollada Pro Salud Noviembre"
-              value={newEventTitleInput}
-              onChange={(e) => setNewEventTitleInput(e.target.value)}
-              className="w-full p-3 border border-stone-300 rounded-xl text-sm font-bold"
-            />
+          <div className="bg-white rounded-2xl p-5 w-full max-w-sm">
+            <h3 className="font-bold text-lg mb-2">Crear Actividad</h3>
+            <input type="text" value={newEventTitleInput} onChange={(e) => setNewEventTitleInput(e.target.value)} className="w-full p-2 border rounded mb-4" placeholder="Nombre" />
             <div className="flex justify-end gap-2">
-              <button onClick={() => setNewEventNameModal(false)} className="px-4 py-2 rounded-xl text-xs font-bold bg-stone-200">Cancelar</button>
-              <button onClick={handleCrearNuevoEvento} className="px-4 py-2 rounded-xl text-xs font-bold bg-orange-600 text-white">Crear Actividad</button>
+              <button onClick={() => setNewEventNameModal(false)} className="px-4 py-2 bg-gray-200 rounded">Cancelar</button>
+              <button onClick={handleCrearNuevoEvento} className="px-4 py-2 bg-orange-600 text-white rounded">Crear</button>
             </div>
           </div>
         </div>
       )}
 
       {showExportModal && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-3xl w-full p-5 space-y-4 shadow-2xl max-h-[85vh] flex flex-col">
-            <div className="flex justify-between items-center border-b pb-3">
-              <div>
-                <h3 className="font-extrabold text-lg text-stone-900">Exportación Lista</h3>
-              </div>
-              <button onClick={() => setShowExportModal(false)} className="p-1.5 rounded-lg bg-stone-100">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button onClick={() => copyToClipboard(generateCSVText(), "CSV_ALL")} className="flex items-center gap-1.5 bg-emerald-700 text-white text-xs font-extrabold px-4 py-2.5 rounded-xl">
-                <Copy className="w-4 h-4" /> Copiar los 250 Tickets para Excel
-              </button>
-            </div>
-            <div className="overflow-y-auto border rounded-xl p-3 bg-stone-50 font-mono text-[11px] flex-1">
-              <pre className="whitespace-pre-wrap">{generateCSVText()}</pre>
-            </div>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-5 w-full max-w-lg">
+            <div className="flex justify-between border-b pb-2 mb-2"><h3 className="font-bold text-lg">Exportar CSV</h3><button onClick={() => setShowExportModal(false)}><X className="w-5 h-5"/></button></div>
+            <textarea className="w-full h-40 text-xs font-mono border p-2 mb-2" readOnly value={generateCSVText()} />
+            <button onClick={() => navigator.clipboard.writeText(generateCSVText())} className="w-full bg-emerald-600 text-white py-2 rounded font-bold">Copiar Portapapeles</button>
           </div>
         </div>
       )}
 
       <main className="max-w-6xl mx-auto p-4 space-y-6">
         {activeTab === "VENDER" && (
-          <div className="grid lg:grid-cols-12 gap-5">
-            <div className="lg:col-span-7 bg-white p-5 rounded-2xl shadow-sm border border-stone-200 space-y-4">
-              <div className="flex justify-between items-center border-b pb-3">
-                <div>
-                  <h2 className="text-lg font-extrabold text-stone-900">1. Vender o Separar Pollada</h2>
-                  <p className="text-xs text-stone-500">Quedan <strong>{metrics.disponibles}</strong> tickets libres de 250.</p>
-                </div>
-              </div>
-
+          <div className="grid lg:grid-cols-2 gap-5">
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-stone-200 space-y-4">
+              <h2 className="text-lg font-extrabold text-stone-900">1. Vender Pollada</h2>
               <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-stone-700">N.º Ticket (1–250)</label>
-                  <input type="text" value={ticketNumInput} onChange={(e) => setTicketNumInput(e.target.value)} className="w-full mt-1 p-2.5 border-2 border-orange-400 rounded-xl font-extrabold text-base text-center" />
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-xs font-bold text-stone-700">Comprador</label>
-                  <input type="text" value={buyerNameInput} onChange={(e) => setBuyerNameInput(e.target.value)} className="w-full mt-1 p-2.5 border border-stone-300 rounded-xl text-sm font-semibold" />
-                </div>
+                <div><label className="text-xs font-bold">N.º (1-250)</label><input type="text" value={ticketNumInput} onChange={(e) => setTicketNumInput(e.target.value)} className="w-full p-2 border rounded text-center font-bold text-lg" /></div>
+                <div className="col-span-2"><label className="text-xs font-bold">Comprador</label><input type="text" value={buyerNameInput} onChange={(e) => setBuyerNameInput(e.target.value)} className="w-full p-2.5 border rounded" /></div>
               </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-stone-700">Celular (Opcional)</label>
-                  <input type="tel" value={buyerPhoneInput} onChange={(e) => setBuyerPhoneInput(e.target.value)} className="w-full mt-1 p-2 border border-stone-300 rounded-xl text-sm" />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-stone-700">Responsable</label>
-                  <select value={sellerNameInput} onChange={(e) => setSellerNameInput(e.target.value)} className="w-full mt-1 p-2 border border-stone-300 rounded-xl bg-white text-sm font-semibold">
-                    {sellers.map((s) => <option key={s.id} value={s.name}>{s.name}</option>)}
-                  </select>
-                </div>
+              <div className="grid grid-cols-2 gap-2">
+                {[{ id: "EFECTIVO_CAJA", label: "Efectivo" }, { id: "YAPE", label: "Yape" }, { id: "SOLO_SEPARAR", label: "Solo Separar" }].map((m) => (
+                  <button key={m.id} onClick={() => setQuickPayMode(m.id)} className={`py-2 text-xs font-bold border rounded ${quickPayMode === m.id ? "bg-stone-900 text-white" : "bg-stone-50"}`}>{m.label}</button>
+                ))}
               </div>
-
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1.5">¿Cómo paga?</label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {[{ id: "EFECTIVO_CAJA", label: "Efectivo Caja" }, { id: "YAPE", label: "Yape / Plin" }, { id: "EFECTIVO_VENDEDOR", label: "Efectivo Vendedor" }, { id: "SOLO_SEPARAR", label: "Solo Separar" }].map((m) => (
-                    <button key={m.id} onClick={() => setQuickPayMode(m.id)} className={`py-2.5 px-2 rounded-xl text-xs font-extrabold border transition ${quickPayMode === m.id ? "bg-stone-900 text-white border-stone-900 shadow-sm" : "bg-stone-50 text-stone-700 border-stone-300 hover:bg-stone-100"}`}>
-                      {m.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
               {quickPayMode === "EFECTIVO_CAJA" && (
-                <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 flex justify-between items-center text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-stone-700">Billete de S/:</span>
-                    <input type="number" value={cashBilleteSoles} onChange={(e) => setCashBilleteSoles(e.target.value)} className="w-20 p-1.5 border border-stone-300 rounded-lg font-extrabold text-sm text-center" />
-                  </div>
-                  <div>Vuelto: <strong className="text-sm text-orange-800">{formatPEN(Math.max(0, Math.round((parseFloat(cashBilleteSoles) || 0) * 100) - ticketNumInput.split(",").filter((x) => x.trim() !== "").length * eventConfig.unitPriceCents))}</strong></div>
+                <div className="p-3 bg-amber-50 rounded flex justify-between items-center text-xs">
+                  <span>Billete S/:</span>
+                  <input type="number" value={cashBilleteSoles} onChange={(e) => setCashBilleteSoles(e.target.value)} className="w-20 p-1 border text-center font-bold" />
+                  <span>Vuelto: <strong className="text-orange-800 text-base">{formatPEN(Math.max(0, Math.round((parseFloat(cashBilleteSoles) || 0) * 100) - 1500))}</strong></span>
                 </div>
               )}
-
-              {quickPayMode !== "SOLO_SEPARAR" && (
-                <label className="flex items-center gap-2 text-xs font-bold text-stone-700 cursor-pointer">
-                  <input type="checkbox" checked={deliverImmediately} onChange={(e) => setDeliverImmediately(e.target.checked)} />
-                  <span>Se lleva el plato ahora mismo (Marcar ENTREGADO)</span>
-                </label>
-              )}
-
-              <button onClick={handleRegistrarTicket} className="w-full bg-orange-600 hover:bg-orange-700 text-white font-extrabold py-3.5 rounded-xl shadow text-sm">
-                {quickPayMode === "SOLO_SEPARAR" ? "Separar Ticket (Falta Pagar)" : "Guardar Venta (S/ 15.00)"}
-              </button>
+              <button onClick={handleRegistrarTicket} className="w-full bg-orange-600 text-white font-extrabold py-3 rounded-xl">{quickPayMode === "SOLO_SEPARAR" ? "Separar Ticket" : "Guardar Venta"}</button>
             </div>
 
-            <div className="lg:col-span-5 bg-white p-5 rounded-2xl shadow-sm border border-stone-200 flex flex-col justify-between space-y-4">
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-stone-200">
+              <h2 className="text-base font-extrabold flex items-center gap-1.5 mb-4"><ShoppingBag className="w-4 h-4 text-orange-600" /> 2. Venta Barra</h2>
               <div className="space-y-3">
-                <h2 className="text-base font-extrabold text-stone-900 flex items-center gap-1.5"><ShoppingBag className="w-4 h-4 text-orange-600" /> 2. Venta Rápida Barra</h2>
-                <div className="space-y-2.5">
-                  {barItems.map((item) => (
-                    <div key={item.id} className="p-3 rounded-xl border border-stone-200 bg-stone-50 flex justify-between items-center gap-2">
-                      <div>
-                        <div className="font-extrabold text-sm text-stone-900">{item.name} — {formatPEN(item.unitPriceCents)}</div>
-                        <div className="text-[11px] text-stone-600">Stock: <strong className={item.stock > 0 ? "text-emerald-700" : "text-red-600"}>{item.stock} und.</strong></div>
-                      </div>
-                      <div className="flex gap-1.5">
-                        <button onClick={() => handleVenderProductoBarra(item.id, "EFECTIVO_CAJA")} className="bg-emerald-700 text-white text-xs font-extrabold px-3 py-2 rounded-lg">+1 Efectivo</button>
-                        <button onClick={() => handleVenderProductoBarra(item.id, "YAPE")} className="bg-purple-700 text-white text-xs font-extrabold px-2.5 py-2 rounded-lg">+1 Yape</button>
-                      </div>
+                {barItems.map((item) => (
+                  <div key={item.id} className="p-3 bg-stone-50 border rounded flex justify-between items-center">
+                    <div><div className="font-bold">{item.name}</div><div className="text-xs">Stock: {item.stock}</div></div>
+                    <div className="flex gap-2">
+                      <button onClick={() => handleVenderProductoBarra(item.id, "EFECTIVO_CAJA")} className="bg-emerald-700 text-white px-3 py-1.5 rounded font-bold text-xs">+1 Efectivo</button>
+                      <button onClick={() => handleVenderProductoBarra(item.id, "YAPE")} className="bg-purple-700 text-white px-3 py-1.5 rounded font-bold text-xs">+1 Yape</button>
                     </div>
-                  ))}
-                </div>
+                  </div>
+                ))}
               </div>
-              <button onClick={() => setActiveTab("FIESTA")} className="w-full py-2.5 px-3 rounded-xl border border-orange-300 bg-orange-50 text-orange-900 text-xs font-extrabold hover:bg-orange-100">
-                Ir a Fiesta y Gastos →
-              </button>
             </div>
           </div>
         )}
 
         {activeTab === "TICKETS" && (
-          <div className="space-y-4">
-            <div className="bg-white p-4 sm:p-5 rounded-2xl shadow-sm border border-stone-200 space-y-4">
-              <div className="flex flex-wrap justify-between items-center gap-3">
-                <div>
-                  <h2 className="font-extrabold text-lg text-stone-900">Padrón de 250 Tickets</h2>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <input type="text" placeholder="Buscar..." value={searchTicketQuery} onChange={(e) => setSearchTicketQuery(e.target.value)} className="text-xs border border-stone-300 rounded-xl px-3 py-2" />
-                  <select value={gridFilterStatus} onChange={(e) => setGridFilterStatus(e.target.value)} className="text-xs font-bold border border-stone-300 rounded-xl px-3 py-2 bg-stone-50">
-                    <option value="TODOS">Todos (250)</option>
-                    <option value="DISPONIBLE">Libres ({metrics.disponibles})</option>
-                    <option value="FALTA_PAGAR">Falta Pagar ({metrics.reservadosSinPago})</option>
-                    <option value="PAGADO">Pagados ({metrics.pagadosCount})</option>
-                    <option value="ENTREGADO">Entregados ({metrics.entregadosCount})</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-5 sm:grid-cols-10 gap-2 max-h-[440px] overflow-y-auto p-1">
-                {filteredTickets.map((t) => {
-                  let style = "bg-stone-50 border-stone-300 text-stone-700";
-                  let statusLabel = "LIBRE";
-                  if (t.deliveryStatus === "ENTREGADO") { style = "bg-stone-900 border-stone-900 text-white"; statusLabel = "ENTREGADO ✓"; }
-                  else if (t.paymentStatus === "PAGADO") { style = "bg-emerald-100 border-emerald-600 text-emerald-950"; statusLabel = "PAGADO $"; }
-                  else if (t.assignmentStatus === "RESERVADO") { style = "bg-amber-100 border-amber-500 text-amber-950"; statusLabel = "DEBE ⏳"; }
-
-                  return (
-                    <button key={t.num} onClick={() => setInspectedTicket(t)} className={`p-2 rounded-xl border text-center flex flex-col items-center justify-center transition hover:scale-105 ${style}`}>
-                      <span className="font-extrabold text-xs">{t.code}</span>
-                      <span className="text-[9px] font-bold mt-0.5">{statusLabel}</span>
-                    </button>
-                  );
-                })}
-              </div>
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-stone-200">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="font-extrabold text-lg">Padrón de 250 Tickets</h2>
+              <select value={gridFilterStatus} onChange={(e) => setGridFilterStatus(e.target.value)} className="border p-2 rounded text-xs font-bold bg-stone-50">
+                <option value="TODOS">Todos</option>
+                <option value="DISPONIBLE">Libres</option>
+                <option value="PAGADO">Pagados</option>
+              </select>
             </div>
-
+            <div className="grid grid-cols-5 sm:grid-cols-10 gap-2 overflow-y-auto max-h-[60vh] p-1">
+              {filteredTickets.map((t) => (
+                <button key={t.num} onClick={() => setInspectedTicket(t)} className={`p-2 border rounded flex flex-col items-center ${t.deliveryStatus === "ENTREGADO" ? "bg-stone-900 text-white" : t.paymentStatus === "PAGADO" ? "bg-emerald-100" : t.assignmentStatus === "RESERVADO" ? "bg-amber-100" : "bg-stone-50"}`}>
+                  <span className="font-extrabold text-sm">{t.code}</span>
+                </button>
+              ))}
+            </div>
             {inspectedTicket && (
-              <div className="bg-white p-5 rounded-2xl shadow-md border-2 border-orange-500 space-y-4">
-                <div className="flex justify-between items-center border-b pb-3">
-                  <div>
-                    <span className="text-xs font-extrabold text-orange-700">Ticket N.º {inspectedTicket.code}</span>
-                    <h3 className="text-lg font-extrabold">{inspectedTicket.buyerName || "Disponible"}</h3>
-                  </div>
-                  <button onClick={() => setInspectedTicket(null)} className="text-xs font-bold bg-stone-200 px-3 py-1.5 rounded-lg">Cerrar</button>
-                </div>
-
-                <div className="grid sm:grid-cols-3 gap-4 items-center">
-                  <div className="p-3 bg-stone-50 rounded-xl border flex flex-col items-center">
-                    <QrCode className="w-20 h-20 text-stone-900" />
-                    <code className="text-[11px] font-mono mt-2">{inspectedTicket.qrToken}</code>
-                  </div>
-                  <div className="sm:col-span-2 space-y-3 text-xs sm:text-sm">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>Pago: <strong className="text-emerald-700">{inspectedTicket.paymentStatus}</strong></div>
-                      <div>Entrega: <strong>{inspectedTicket.deliveryStatus}</strong></div>
-                      <div>Vendedor: <strong>{inspectedTicket.sellerName}</strong></div>
-                    </div>
-                    <div className="flex flex-wrap gap-2 pt-2 border-t">
-                      {inspectedTicket.assignmentStatus === "DISPONIBLE" && (
-                        <button onClick={() => { setTicketNumInput(String(inspectedTicket.num)); setActiveTab("VENDER"); }} className="bg-orange-600 text-white text-xs font-extrabold px-4 py-2 rounded-xl">Vender Ticket</button>
-                      )}
-                      {inspectedTicket.assignmentStatus !== "DISPONIBLE" && inspectedTicket.paymentStatus !== "PAGADO" && (
-                        <>
-                          <button onClick={() => handleCobrarTicketSeparado(inspectedTicket.num, "EFECTIVO_CAJA")} className="bg-emerald-700 text-white text-xs font-extrabold px-3.5 py-2 rounded-xl">Cobrar Efectivo</button>
-                          <button onClick={() => handleCobrarTicketSeparado(inspectedTicket.num, "YAPE")} className="bg-purple-700 text-white text-xs font-extrabold px-3.5 py-2 rounded-xl">Cobrar Yape</button>
-                        </>
-                      )}
-                      {inspectedTicket.paymentStatus === "PAGADO" && inspectedTicket.deliveryStatus === "PENDIENTE" && (
-                        <button onClick={() => handleEntregarPlato(inspectedTicket.num)} className="bg-stone-900 text-white text-xs font-extrabold px-4 py-2 rounded-xl">Entregar Plato</button>
-                      )}
-                    </div>
-                  </div>
+              <div className="mt-4 p-4 border-2 border-orange-500 rounded bg-white flex justify-between items-center">
+                <div><span className="text-xs text-orange-700 font-bold">Ticket N.º {inspectedTicket.code}</span><h3 className="font-extrabold">{inspectedTicket.buyerName || "Disponible"}</h3><p className="text-xs">Pago: {inspectedTicket.paymentStatus}</p></div>
+                <div className="flex gap-2">
+                  <button onClick={() => setInspectedTicket(null)} className="px-3 py-2 bg-gray-200 rounded font-bold text-xs">Cerrar</button>
                 </div>
               </div>
             )}
@@ -1134,27 +702,14 @@ export default function App() {
         )}
 
         {activeTab === "ENTREGAR" && (
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-stone-200 space-y-4">
-            <h2 className="text-lg font-extrabold text-stone-900">Despacho de Platos</h2>
-            <div className="relative">
-              <Search className="w-4 h-4 text-stone-400 absolute left-3.5 top-3.5" />
-              <input type="text" value={deliveryQuery} onChange={(e) => setDeliveryQuery(e.target.value)} placeholder="Busca por N.º o nombre..." className="w-full pl-10 pr-4 py-3 border rounded-xl text-sm font-bold" />
-            </div>
-            <div className="space-y-2.5">
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-stone-200">
+            <h2 className="font-extrabold text-lg mb-4">Despacho</h2>
+            <input type="text" placeholder="Buscar ticket..." value={deliveryQuery} onChange={(e) => setDeliveryQuery(e.target.value)} className="w-full p-3 border rounded mb-4" />
+            <div className="space-y-3">
               {deliveryList.map((t) => (
-                <div key={t.num} className={`p-4 rounded-xl border-2 flex flex-wrap justify-between items-center gap-3 ${t.deliveryStatus === "ENTREGADO" ? "bg-stone-100 border-stone-300" : t.paymentStatus === "PAGADO" ? "bg-emerald-50 border-emerald-500" : "bg-amber-50 border-amber-400"}`}>
-                  <div>
-                    <span className="font-extrabold text-base">Ticket N.º {t.code}</span>
-                    <p className="text-sm font-bold text-stone-800">{t.buyerName || "Sin nombre"}</p>
-                  </div>
-                  <div className="flex gap-2">
-                    {t.paymentStatus !== "PAGADO" && (
-                      <button onClick={() => handleCobrarTicketSeparado(t.num, "EFECTIVO_CAJA")} className="bg-amber-600 text-white text-xs font-extrabold px-3.5 py-2.5 rounded-xl">Cobrar S/ 15</button>
-                    )}
-                    <button onClick={() => handleEntregarPlato(t.num)} disabled={t.deliveryStatus === "ENTREGADO"} className={`text-xs font-extrabold px-4 py-2.5 rounded-xl ${t.deliveryStatus === "ENTREGADO" ? "bg-stone-300 text-stone-600" : "bg-emerald-700 text-white"}`}>
-                      {t.deliveryStatus === "ENTREGADO" ? "Entregado" : "Entregar Plato"}
-                    </button>
-                  </div>
+                <div key={t.num} className="p-4 border rounded flex justify-between items-center bg-stone-50">
+                  <div><span className="font-bold">N.º {t.code}</span><p className="text-sm">{t.buyerName}</p></div>
+                  <button onClick={() => handleEntregarPlato(t.num)} className={`px-4 py-2 text-white font-bold rounded ${t.deliveryStatus === "ENTREGADO" ? "bg-gray-400" : "bg-emerald-700"}`}>{t.deliveryStatus === "ENTREGADO" ? "Entregado" : "Entregar"}</button>
                 </div>
               ))}
             </div>
@@ -1162,181 +717,56 @@ export default function App() {
         )}
 
         {activeTab === "FIESTA" && (
-          <div className="grid lg:grid-cols-12 gap-5">
-            <div className="lg:col-span-6 bg-white p-5 rounded-2xl shadow-sm border border-stone-200 space-y-4">
-              <h2 className="text-lg font-extrabold text-stone-900">Pagar Compras o Gastos</h2>
-              <div className="grid grid-cols-3 gap-2">
-                {[{ id: "COMPRA_BARRA", label: "Barra" }, { id: "GASTO_FIESTA", label: "DJ/Fiesta" }, { id: "PAGO_POLLOS", label: "Pollos" }].map((t) => (
-                  <button key={t.id} onClick={() => setExpenseType(t.id)} className={`p-2.5 rounded-xl text-xs font-extrabold border ${expenseType === t.id ? "bg-orange-600 text-white border-orange-600" : "bg-stone-50 text-stone-700 border-stone-300"}`}>{t.label}</button>
-                ))}
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-stone-200">
+            <h2 className="font-extrabold text-lg mb-4">Gastos</h2>
+            <div className="grid gap-3">
+              <input type="text" value={expenseConcept} onChange={(e) => setExpenseConcept(e.target.value)} placeholder="Concepto (ej. Pago DJ)" className="p-3 border rounded" />
+              <input type="number" value={expenseAmountSoles} onChange={(e) => setExpenseAmountSoles(e.target.value)} placeholder="Monto S/" className="p-3 border rounded font-bold" />
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => setExpensePayOrigin("EFECTIVO_CAJA")} className={`p-2 border rounded ${expensePayOrigin === "EFECTIVO_CAJA" ? "bg-stone-900 text-white" : "bg-stone-50"}`}>De Caja</button>
+                <button onClick={() => setExpensePayOrigin("YAPE_EVENTO")} className={`p-2 border rounded ${expensePayOrigin === "YAPE_EVENTO" ? "bg-stone-900 text-white" : "bg-stone-50"}`}>De Yape</button>
               </div>
-              {expenseType === "COMPRA_BARRA" && (
-                <div className="grid grid-cols-2 gap-3">
-                  <select value={selectedBarProductId} onChange={(e) => setSelectedBarProductId(e.target.value)} className="p-2 border rounded-lg bg-white text-xs font-bold">
-                    {barItems.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                  </select>
-                  <input type="number" value={addedBarUnits} onChange={(e) => setAddedBarUnits(e.target.value)} placeholder="Cantidad" className="p-2 border rounded-lg text-xs font-extrabold" />
-                </div>
-              )}
-              <div className="grid sm:grid-cols-2 gap-3">
-                <input type="text" value={expenseConcept} onChange={(e) => setExpenseConcept(e.target.value)} placeholder="Concepto" className="p-2.5 border rounded-xl text-sm" />
-                <input type="number" value={expenseAmountSoles} onChange={(e) => setExpenseAmountSoles(e.target.value)} placeholder="Monto S/" className="p-2.5 border rounded-xl text-sm font-extrabold" />
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                {[{ id: "EFECTIVO_CAJA", label: "Caja" }, { id: "YAPE_EVENTO", label: "Yape" }, { id: "POR_PAGAR", label: "Crédito" }].map((o) => (
-                  <button key={o.id} onClick={() => setExpensePayOrigin(o.id)} className={`p-2 rounded-xl text-xs font-bold border ${expensePayOrigin === o.id ? "bg-stone-900 text-white" : "bg-stone-50"}`}>{o.label}</button>
-                ))}
-              </div>
-              <button onClick={handleRegistrarCompraOGastoConCaja} className="w-full bg-orange-600 text-white font-extrabold py-3 rounded-xl text-sm">Registrar Salida</button>
-            </div>
-            <div className="lg:col-span-6 space-y-4">
-              <div className="bg-white p-5 rounded-2xl shadow-sm border border-stone-200 space-y-3">
-                <h3 className="font-extrabold text-sm uppercase">Gastos Hechos ({formatPEN(metrics.gastosTotalesCents)})</h3>
-                <div className="space-y-2 max-h-60 overflow-y-auto">
-                  {expenses.map((e) => (
-                    <div key={e.id} className="p-3 rounded-xl border bg-stone-50 flex justify-between items-center text-xs">
-                      <div><div className="font-bold">{e.concept}</div><div className="text-[11px] text-stone-500">{e.payOrigin}</div></div>
-                      <strong className="text-red-700 text-sm">- {formatPEN(e.amountCents)}</strong>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === "CAJA" && (
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-stone-200 space-y-5">
-            <h2 className="text-lg font-extrabold text-stone-900">Control de Caja y Yape</h2>
-            <div className="grid sm:grid-cols-2 gap-5">
-              <div className="p-4 rounded-xl bg-stone-50 border space-y-2 text-sm">
-                <h3 className="font-extrabold text-xs uppercase">Efectivo Físico</h3>
-                <div className="flex justify-between"><span>Fondo inicial:</span><strong>{formatPEN(fondoInicialCajaCents)}</strong></div>
-                <div className="flex justify-between"><span>+ Entradas Caja:</span><strong className="text-emerald-700">+ {formatPEN(metrics.entradasEfectivoCajaCents)}</strong></div>
-                <div className="flex justify-between"><span>− Salidas Caja:</span><strong className="text-red-600">- {formatPEN(metrics.salidasEfectivoCajaCents)}</strong></div>
-                <div className="flex justify-between border-t pt-2 font-extrabold"><span>DEBE haber:</span><span className="text-orange-800">{formatPEN(metrics.efectivoDisponibleCajaCents)}</span></div>
-              </div>
-              <div className="p-4 rounded-xl bg-stone-50 border space-y-3">
-                <h3 className="font-extrabold text-xs uppercase">Conteo Real</h3>
-                <input type="number" value={(conteoFisicoRealCents / 100).toFixed(2)} onChange={(e) => { setConteoFisicoRealCents(Math.round((parseFloat(e.target.value) || 0) * 100)); }} className="w-full p-2.5 border rounded-xl font-extrabold text-base bg-white" />
-                <div className="flex justify-between text-sm font-extrabold"><span>Diferencia:</span><span className={metrics.diferenciaCajaCents === 0 ? "text-emerald-700" : "text-red-600"}>{formatPEN(metrics.diferenciaCajaCents)}</span></div>
-                <div className="border-t pt-2 flex justify-between text-sm font-bold text-purple-900"><span>Yape / Plin:</span><span>{formatPEN(metrics.saldoDisponibleYapeCents)}</span></div>
-              </div>
+              <button onClick={handleRegistrarCompraOGastoConCaja} className="bg-orange-600 text-white font-bold py-3 rounded">Registrar Salida</button>
             </div>
           </div>
         )}
 
         {activeTab === "RESUMEN" && (
-          <div className="space-y-5">
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-orange-200">
-              <h2 className="font-extrabold text-lg text-stone-900 mb-4">Resumen General — {eventConfig.name}</h2>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-                <div className="p-4 rounded-2xl border"><span className="text-xs font-bold text-stone-500 uppercase">Libres</span><p className="text-2xl font-extrabold">{metrics.disponibles}</p></div>
-                <div className="p-4 rounded-2xl border"><span className="text-xs font-bold text-stone-500 uppercase">Pagados</span><p className="text-2xl font-extrabold text-emerald-700">{metrics.pagadosCount}</p></div>
-                <div className="p-4 rounded-2xl border"><span className="text-xs font-bold text-stone-500 uppercase">Entregados</span><p className="text-2xl font-extrabold text-orange-700">{metrics.entregadosCount}</p></div>
-                <div className="p-4 rounded-2xl border"><span className="text-xs font-bold text-stone-500 uppercase">Barra</span><p className="text-2xl font-extrabold text-blue-700">{formatPEN(metrics.ingresosBarraCents)}</p></div>
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-stone-200">
+            <h2 className="font-extrabold text-lg mb-4">Caja</h2>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-4 border rounded bg-stone-50">
+                <h3 className="font-bold text-xs text-stone-500 uppercase">Efectivo Físico Debe Haber:</h3>
+                <p className="text-2xl font-extrabold mt-1">{formatPEN(metrics.efectivoDisponibleCajaCents)}</p>
               </div>
-              <div className="grid md:grid-cols-2 gap-4">
-                <div className="p-5 rounded-2xl border space-y-2 text-sm">
-                  <h3 className="font-extrabold text-sm uppercase border-b pb-2">1. Dinero Actual</h3>
-                  <div className="flex justify-between"><span>Efectivo Caja:</span><strong>{formatPEN(metrics.efectivoDisponibleCajaCents - fondoInicialCajaCents)}</strong></div>
-                  <div className="flex justify-between"><span>Yape:</span><strong className="text-purple-800">{formatPEN(metrics.saldoDisponibleYapeCents)}</strong></div>
-                </div>
-                <div className="p-5 rounded-2xl border space-y-2 text-sm">
-                  <h3 className="font-extrabold text-sm uppercase text-emerald-900 border-b pb-2">2. Ganancia Neta</h3>
-                  <div className="flex justify-between"><span>+ Polladas:</span><strong className="text-emerald-700">+ {formatPEN(metrics.cobradoTicketsCents)}</strong></div>
-                  <div className="flex justify-between"><span>+ Barra:</span><strong className="text-blue-700">+ {formatPEN(metrics.ingresosBarraCents)}</strong></div>
-                  <div className="flex justify-between"><span>− Gastos:</span><strong className="text-red-600">- {formatPEN(metrics.gastosTotalesCents)}</strong></div>
-                  <div className="flex justify-between border-t pt-2 font-extrabold"><span>Ganancia:</span><span className={metrics.gananciaNetaActualCents >= 0 ? "text-emerald-700" : "text-red-600"}>{formatPEN(metrics.gananciaNetaActualCents)}</span></div>
-                </div>
+              <div className="p-4 border rounded bg-purple-50 border-purple-200">
+                <h3 className="font-bold text-xs text-purple-700 uppercase">Yape Total:</h3>
+                <p className="text-2xl font-extrabold text-purple-900 mt-1">{formatPEN(metrics.saldoDisponibleYapeCents)}</p>
               </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === "VENDEDORES" && (
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-stone-200 space-y-4">
-            <h2 className="text-lg font-extrabold text-stone-900">Rendición de Vendedores</h2>
-            <div className="space-y-2.5">
-              {sellers.map((s) => {
-                const pendiente = Math.max(0, s.cashInHandCents - s.settledCents);
-                return (
-                  <div key={s.id} className="p-4 rounded-xl border bg-stone-50 flex justify-between items-center text-sm">
-                    <div>
-                      <div className="font-extrabold">{s.name}</div>
-                      <div className="text-xs text-stone-600">Cobrado: {formatPEN(s.cashInHandCents)} | <strong className="text-orange-800">Falta: {formatPEN(pendiente)}</strong></div>
-                    </div>
-                    {pendiente > 0 && (
-                      <button onClick={() => {
-                        const nextSellers = sellers.map((item) => item.id === s.id ? { ...item, settledCents: item.cashInHandCents } : item);
-                        const nextPayments = [{ id: `REND-${Date.now()}`, description: `Rendición de ${s.name}`, amountCents: pendiente, destination: "EFECTIVO_CAJA", time: new Date().toLocaleTimeString("es-PE") }, ...payments];
-                        const nextConteo = conteoFisicoRealCents + pendiente;
-                        setSellers(nextSellers);
-                        setPayments(nextPayments);
-                        setConteoFisicoRealCents(nextConteo);
-                        saveToCloud({ sellers: nextSellers, payments: nextPayments, conteoFisicoRealCents: nextConteo });
-                        notify(`Recibidos ${formatPEN(pendiente)} de ${s.name}.`, "success");
-                      }} className="bg-emerald-700 text-white text-xs font-extrabold px-4 py-2 rounded-xl">Recibir {formatPEN(pendiente)}</button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {activeTab === "RECORDATORIOS" && (
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-stone-200 space-y-4">
-            <h2 className="text-lg font-extrabold text-stone-900">WhatsApp a Compradores</h2>
-            <div className="space-y-2">
-              {tickets.filter((t) => t.assignmentStatus !== "DISPONIBLE").length === 0 ? <p className="text-xs text-stone-500">Aún no hay tickets.</p> : tickets.filter((t) => t.assignmentStatus !== "DISPONIBLE").map((t) => (
-                <div key={t.num} className="p-3 rounded-xl border bg-stone-50 flex justify-between items-center text-xs">
-                  <div><strong>Ticket #{t.code} — {t.buyerName}</strong> ({t.paymentStatus})</div>
-                  <a href={`https://wa.me/${(t.buyerPhone || "").replace(/\D/g, "")}?text=${encodeURIComponent(`Hola ${t.buyerName}, tu ticket de ${eventConfig.name} es el N.º ${t.code} (Estado: ${t.paymentStatus}). Código QR: ${t.qrToken}`)}`} target="_blank" rel="noreferrer" className="bg-emerald-600 text-white font-bold px-3 py-1.5 rounded-lg">Enviar WhatsApp</a>
-                </div>
-              ))}
             </div>
           </div>
         )}
 
         {activeTab === "CONFIG" && (
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-stone-200 space-y-4">
-            <h2 className="text-lg font-extrabold text-stone-900">Datos del Evento</h2>
-            <div className="grid sm:grid-cols-2 gap-4 text-sm">
-              <input type="text" value={eventConfig.name} onChange={(e) => { const next = { ...eventConfig, name: e.target.value }; setEventConfig(next); saveToCloud({ eventConfig: next }); }} className="p-2.5 border rounded-xl" placeholder="Nombre" />
-              <input type="text" value={eventConfig.address} onChange={(e) => { const next = { ...eventConfig, address: e.target.value }; setEventConfig(next); saveToCloud({ eventConfig: next }); }} className="p-2.5 border rounded-xl" placeholder="Dirección" />
-              <input type="number" value={pollosRecibidos} onChange={(e) => { const val = parseInt(e.target.value, 10) || 0; setPollosRecibidos(val); saveToCloud({ pollosRecibidos: val }); }} className="p-2.5 border rounded-xl font-bold" placeholder="Platos" />
-              <input type="number" value={(fondoInicialCajaCents / 100).toFixed(2)} onChange={(e) => { const val = Math.round((parseFloat(e.target.value) || 0) * 100); setFondoInicialCajaCents(val); saveToCloud({ fondoInicialCajaCents: val }); }} className="p-2.5 border rounded-xl font-bold" placeholder="Fondo Inicial" />
-            </div>
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-stone-200">
+            <h2 className="font-extrabold text-lg mb-4">Configurar Evento</h2>
+            <input type="text" value={eventConfig.name} onChange={(e) => setEventConfig({ ...eventConfig, name: e.target.value })} className="w-full p-3 border rounded mb-2 font-bold" />
+            <input type="text" value={eventConfig.address} onChange={(e) => setEventConfig({ ...eventConfig, address: e.target.value })} className="w-full p-3 border rounded" placeholder="Lugar" />
           </div>
         )}
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-300 shadow-lg z-30">
-        <div className="max-w-6xl mx-auto grid grid-cols-5">
-          {[
-            { id: "VENDER", label: "Vender", icon: Ticket },
-            { id: "TICKETS", label: "Tickets", icon: QrCode },
-            { id: "ENTREGAR", label: "Entregar", icon: Utensils },
-            { id: "FIESTA", label: "Fiesta", icon: Music },
-            { id: "RESUMEN", label: "Caja", icon: BarChart3 },
-          ].map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex flex-col items-center justify-center py-2.5 text-xs font-extrabold transition ${
-                  isActive ? "text-orange-700 bg-orange-50 border-t-4 border-orange-600" : "text-stone-600"
-                }`}
-              >
-                <Icon className="w-4 h-4 mb-0.5" />
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
-        </div>
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around p-2 pb-4 z-40">
+        {[
+          { id: "VENDER", label: "Vender", icon: Ticket },
+          { id: "TICKETS", label: "Tickets", icon: QrCode },
+          { id: "ENTREGAR", label: "Entregar", icon: Utensils },
+          { id: "RESUMEN", label: "Caja", icon: BarChart3 }
+        ].map((t) => (
+          <button key={t.id} onClick={() => setActiveTab(t.id)} className={`flex flex-col items-center justify-center p-2 rounded-lg text-xs font-bold ${activeTab === t.id ? "text-orange-700 bg-orange-50" : "text-stone-500"}`}>
+            <t.icon className="w-5 h-5 mb-1" />{t.label}
+          </button>
+        ))}
       </nav>
     </div>
   );
