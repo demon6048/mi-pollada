@@ -973,11 +973,28 @@ export default function MiPolladaPage() {
 
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-300 shadow-lg z-30">
         <div className="max-w-6xl mx-auto grid grid-cols-5">
-          {[{ id: "VENDER", label: "Vender", icon: Ticket }, { id: "TICKETS", label: "Tickets", icon: QrCode }, { id: "ENTREGAR", label: "Entregar", icon: Utensils }, { id: "FIESTA", label: "Fiesta", icon: Music }, { id: "CAJA", label: "Caja", icon: BarChart3 }].map((tab) => (
-            <button key={tab.id} type="button" onClick={() => setActiveTab(tab.id as TabId)} className={`flex flex-col items-center justify-center py-2.5 text-xs font-extrabold ${activeTab === tab.id ? "text-orange-700 bg-orange-50 border-t-4 border-orange-600" : "text-stone-600"}`}>
-              <tab.icon className="w-4 h-4 mb-0.5" /> <span>{tab.label}</span>
-            </button>
-          ))}
+          {[
+            { id: "VENDER", label: "Vender", icon: Ticket },
+            { id: "TICKETS", label: "Tickets", icon: QrCode },
+            { id: "ENTREGAR", label: "Entregar", icon: Utensils },
+            { id: "FIESTA", label: "Fiesta", icon: Music },
+            { id: "RESUMEN", label: "Caja", icon: BarChart3 },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as TabId)}
+                className={`flex flex-col items-center justify-center py-2.5 text-xs font-extrabold transition ${
+                  isActive ? "text-orange-700 bg-orange-50 border-t-4 border-orange-600" : "text-stone-600"
+                }`}
+              >
+                <Icon className="w-4 h-4 mb-0.5" />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
         </div>
       </nav>
     </div>
