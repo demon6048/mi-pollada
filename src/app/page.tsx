@@ -43,6 +43,9 @@ import {
   UserPlus,
   BarChart3,
   MessageCircle,
+  Gift,
+  Sparkles,
+  Image as ImageIcon,
 } from "lucide-react";
 
 /**
@@ -58,6 +61,34 @@ interface EventConfig {
   capacity: number;
   unitCostCents: number;
   unitPriceCents: number;
+  customFlyerBg?: string;
+}
+
+interface VipClientRecord {
+  id: string;
+  buyerName: string;
+  buyerPhone: string;
+  totalTicketsBought: number;
+  lastTicketCode: string;
+  lastEventName: string;
+  lastSellerName: string;
+  preferredService: string;
+  assignedGift: string;
+  updatedAt: string;
+}
+
+interface SoldTicketPopupData {
+  codesText: string;
+  buyerName: string;
+  buyerPhone: string;
+  sellerName: string;
+  serviceType: string;
+  paymentStatus: string;
+  totalCents: number;
+  qrToken: string;
+  cardImageUrl: string;
+  whatsappUrl: string;
+  whatsappMessageText: string;
 }
 
 interface TicketItem {
@@ -135,6 +166,30 @@ interface EventSummaryItem {
 interface ToastMessage {
   msg: string;
   type: string;
+}
+
+interface VipCustomerRecord {
+  id: string;
+  name: string;
+  phone: string;
+  totalTicketsBought: number;
+  totalSpentCents: number;
+  eventsCount: number;
+  lastEventName: string;
+  lastSellerName: string;
+  lastServiceType: string;
+  lastTicketCode: string;
+  updatedAt: string;
+}
+
+interface SaleSuccessModalData {
+  tickets: TicketItem[];
+  buyerName: string;
+  buyerPhone: string;
+  sellerName: string;
+  serviceType: string;
+  paymentStatus: string;
+  totalCents: number;
 }
 
 /**
@@ -270,6 +325,49 @@ const createInitialBarItems = (): BarItem[] => [
   },
 ];
 
+// Texto personalizado de agradecimiento según modalidad (Local, Para Llevar o Delivery)
+const getServiceDeliveryPhrase = (
+  serviceType: string,
+  address: string
+): string => {
+  if (serviceType === "MESA_LOCAL") {
+    return `🍽️ *Modalidad:* Comer en el Local.\nLo esperamos con mucho gusto en nuestro local (*${address}*) para atenderlo como usted se merece.`;
+  }
+  if (serviceType === "DELIVERY_HUANUCO") {
+    return `🛵 *Modalidad:* Envío por Delivery.\nQuedamos agendados para enviarle su pedido por delivery hasta su casa puntualmente.`;
+  }
+  return `🛍️ *Modalidad:* Para Llevar.\nQuedamos listos en *${address}* para entregarle su pollada bien despachada para llevar.`;
+};
+
+// Generador del mensaje completo de agradecimiento al vender
+const buildThankYouSaleMessage = (
+  codesText: string,
+  buyerName: string,
+  sellerName: string,
+  serviceType: string,
+  paymentStatus: string,
+  totalCents: number,
+  qrToken: string,
+  cfg: EventConfig
+): string => {
+  const deliveryPhrase = getServiceDeliveryPhrase(serviceType, cfg.address);
+  const paymentPhrase =
+    paymentStatus === "PAGADO"
+      ? `✅ *PAGADO CONFIRMADO* (${formatPEN(totalCents)})`
+      : `⏳ *SEPARADO - PAGO PENDIENTE* (${formatPEN(totalCents)})`;
+
+  return (
+    `🍗 *¡MUCHAS GRACIAS POR SU COMPRA! — JCR EVENTOS*\n` +
+    `Hola *${buyerName || "Estimado(a) Cliente"}* 👋, muchas gracias por colaborar con nuestra actividad *${cfg.name}*. ¡Le agradecemos de corazón su apoyo!\n\n` +
+    `🎟️ *Ticket Oficial N.º:* #${codesText}\n` +
+    `💳 *Estado:* ${paymentPhrase}\n` +
+    `🧑‍💼 *Vendedor:* ${sellerName}\n` +
+    `${deliveryPhrase}\n\n` +
+    `🔐 *Código QR Antifraude:* ${qrToken}\n` +
+    `📎 *(Te adjuntamos aquí mismo tu Tarjeta Oficial del Ticket)*`
+  );
+};
+
 // Generador de enlace de WhatsApp para enviar el Ticket Oficial QR
 const buildWhatsAppTicketUrl = (t: TicketItem, cfg: EventConfig): string => {
   const cleanPhone = (t.buyerPhone || "").replace(/\D/g, "");
@@ -278,14 +376,245 @@ const buildWhatsAppTicketUrl = (t: TicketItem, cfg: EventConfig): string => {
       ? cleanPhone
       : `51${cleanPhone}`
     : "";
+  const msg = buildThankYouSaleMessage(
+    t.code,
+    t.buyerName || "Cliente",
+    t.sellerName,
+    t.serviceType,
+    t.paymentStatus,
+    t.agreedPriceCents,
+    t.qrToken,
+    cfg
+  );
+  return `https://wa.me/${phoneWithCountry}?text=${encodeURIComponent(msg)}`;
+};
+
+// Función segura para dibujar rectángulos redondeados en Canvas (compatible con todos los celulares)
+const drawRoundedRectSafe = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number
+) => {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+};
+
+// Generador de la Tarjeta Gráfica del Ticket en formato PNG descargable
+const generateTicketCardImage = async (params: {
+  codesText: string;
+  buyerName: string;
+  sellerName: string;
+  serviceType: string;
+  paymentStatus: string;
+  totalCents: number;
+  qrToken: string;
+  cfg: EventConfig;
+}): Promise<string> => {
+  if (typeof document === "undefined") return "";
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = 800;
+    canvas.height = 1020;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return "";
+
+    // 1. Fondo predefinido JCR EVENTOS o Imagen Personalizada subida por el usuario
+    let drewCustomBg = false;
+    if (params.cfg.customFlyerBg) {
+      try {
+        const img = new window.Image();
+        img.crossOrigin = "anonymous";
+        await new Promise<void>((resolve) => {
+          img.onload = () => resolve();
+          img.onerror = () => resolve();
+          img.src = params.cfg.customFlyerBg || "";
+        });
+        if (img.width > 0) {
+          ctx.drawImage(img, 0, 0, 800, 1020);
+          ctx.fillStyle = "rgba(15, 10, 5, 0.55)";
+          ctx.fillRect(0, 0, 800, 1020);
+          drewCustomBg = true;
+        }
+      } catch {
+        drewCustomBg = false;
+      }
+    }
+
+    if (!drewCustomBg) {
+      const grad = ctx.createLinearGradient(0, 0, 800, 1020);
+      grad.addColorStop(0, "#450a0a");
+      grad.addColorStop(0.5, "#9a3412");
+      grad.addColorStop(1, "#1c1917");
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 800, 1020);
+    }
+
+    // Marco dorado exterior
+    ctx.strokeStyle = "#fbbf24";
+    ctx.lineWidth = 6;
+    drawRoundedRectSafe(ctx, 28, 28, 744, 964, 28);
+    ctx.stroke();
+
+    // Tarjeta crema central
+    ctx.fillStyle = "rgba(255, 251, 235, 0.96)";
+    drawRoundedRectSafe(ctx, 52, 52, 696, 916, 24);
+    ctx.fill();
+
+    // Encabezado JCR EVENTOS
+    ctx.fillStyle = "#7c2d12";
+    drawRoundedRectSafe(ctx, 52, 52, 696, 160, 24);
+    ctx.fill();
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#fde68a";
+    ctx.font = "bold 22px sans-serif";
+    ctx.fillText(
+      `★ PROMOTORA OFICIAL: ${params.cfg.promoter || "JCR EVENTOS"} ★`,
+      400,
+      100
+    );
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 34px sans-serif";
+    ctx.fillText(params.cfg.name.toUpperCase().slice(0, 30), 400, 150);
+
+    ctx.fillStyle = "#fed7aa";
+    ctx.font = "bold 20px sans-serif";
+    ctx.fillText(`📍 ${params.cfg.address.slice(0, 42)}`, 400, 190);
+
+    // Recuadro N.º de Ticket
+    ctx.fillStyle = "#ffedd5";
+    drawRoundedRectSafe(ctx, 90, 238, 620, 135, 20);
+    ctx.fill();
+    ctx.strokeStyle = "#ea580c";
+    ctx.lineWidth = 4;
+    ctx.stroke();
+
+    ctx.fillStyle = "#9a3412";
+    ctx.font = "bold 22px sans-serif";
+    ctx.fillText("TICKET OFICIAL DE COLABORACIÓN", 400, 276);
+
+    ctx.fillStyle = "#c2410c";
+    ctx.font = "bold 58px monospace";
+    ctx.fillText(`N.º #${params.codesText}`, 400, 346);
+
+    // Sello PAGADO vs SEPARADO
+    const isPaid = params.paymentStatus === "PAGADO";
+    ctx.fillStyle = isPaid ? "#059669" : "#d97706";
+    drawRoundedRectSafe(ctx, 150, 395, 500, 58, 29);
+    ctx.fill();
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 25px sans-serif";
+    ctx.fillText(
+      isPaid
+        ? `✓ PAGADO CONFIRMADO (${formatPEN(params.totalCents)})`
+        : `⏳ TICKET SEPARADO - DEBE ${formatPEN(params.totalCents)}`,
+      400,
+      432
+    );
+
+    // Datos del Comprador y Modalidad
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#1c1917";
+    ctx.font = "bold 25px sans-serif";
+    ctx.fillText(
+      `👤 CLIENTE: ${(params.buyerName || "Cliente").slice(0, 28)}`,
+      100,
+      510
+    );
+
+    const serviceLabel =
+      params.serviceType === "MESA_LOCAL"
+        ? "🍽️ COMER EN EL LOCAL"
+        : params.serviceType === "DELIVERY_HUANUCO"
+        ? "🛵 ENVÍO POR DELIVERY"
+        : "🛍️ PARA LLEVAR";
+
+    ctx.fillText(`📦 MODALIDAD: ${serviceLabel}`, 100, 562);
+    ctx.fillText(`🧑‍💼 VENDEDOR: ${params.sellerName}`, 100, 614);
+    ctx.fillText(`📍 DIRECCIÓN: ${params.cfg.address.slice(0, 32)}`, 100, 666);
+
+    // Franja de agradecimiento
+    ctx.fillStyle = "#fef3c7";
+    drawRoundedRectSafe(ctx, 90, 700, 620, 78, 16);
+    ctx.fill();
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#92400e";
+    ctx.font = "bold 20px sans-serif";
+    ctx.fillText(
+      "¡Muchas gracias por colaborar con nuestra actividad!",
+      400,
+      735
+    );
+    ctx.font = "bold 17px sans-serif";
+    ctx.fillText(
+      params.serviceType === "MESA_LOCAL"
+        ? "Lo esperamos en nuestro local para atenderlo con gusto."
+        : params.serviceType === "DELIVERY_HUANUCO"
+        ? "Le enviaremos su pedido por delivery puntualmente."
+        : "Presente esta tarjeta digital al recoger su pedido.",
+      400,
+      762
+    );
+
+    // Código QR / Token Antifraude
+    ctx.fillStyle = "#1c1917";
+    drawRoundedRectSafe(ctx, 90, 800, 620, 125, 18);
+    ctx.fill();
+
+    ctx.fillStyle = "#fbbf24";
+    ctx.font = "bold 17px sans-serif";
+    ctx.fillText(
+      "🔐 TOKEN ÚNICO DE SEGURIDAD ANTIFRAUDE — JCR EVENTOS",
+      400,
+      838
+    );
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 34px monospace";
+    ctx.fillText(params.qrToken, 400, 892);
+
+    return canvas.toDataURL("image/png");
+  } catch (err) {
+    console.error("Error generando tarjeta PNG:", err);
+    return "";
+  }
+};
+
+// Generador de invitación WhatsApp para Clientes VIP con Regalo (Netflix, Disney+, etc.)
+const buildVipGiftInviteWhatsAppUrl = (
+  client: VipClientRecord,
+  cfg: EventConfig,
+  giftOffer: string
+): string => {
+  const cleanPhone = (client.buyerPhone || "").replace(/\D/g, "");
+  const phoneWithCountry = cleanPhone
+    ? cleanPhone.startsWith("51")
+      ? cleanPhone
+      : `51${cleanPhone}`
+    : "";
+  const giftToUse = client.assignedGift || giftOffer;
   const msg =
-    `🍗 *JCR EVENTOS - ${cfg.name.toUpperCase()}*\n` +
-    `🎟️ Ticket Oficial N.º *${t.code}*\n` +
-    `👤 Cliente: *${t.buyerName || "Cliente"}*\n` +
-    `🧑‍💼 Atendido por: ${t.sellerName}\n` +
-    `💳 Estado de Pago: *${t.paymentStatus}* (${formatPEN(t.paidCents)})\n` +
-    `🔐 Token QR Antifraude: *${t.qrToken}*\n` +
-    `📍 Lugar: ${cfg.address}`;
+    `Hola *${client.buyerName}* 👋, te saludamos con mucho aprecio del equipo de *JCR EVENTOS*.\n\n` +
+    `Queremos agradecerte nuevamente porque nos colaboraste en *${client.lastEventName}* (Ticket #${client.lastTicketCode}). Como eres parte de nuestra lista de *Clientes VIP Colaboradores*, queremos invitarte de manera especial a nuestra nueva actividad:\n\n` +
+    `🍗 *${cfg.name.toUpperCase()}*\n` +
+    `📍 Lugar: ${cfg.address}\n` +
+    `💰 Colaboración: ${formatPEN(cfg.unitPriceCents)}\n\n` +
+    `🎁 *REGALO ESPECIAL PARA TI:* Por volver a colaborarnos en esta actividad, te entregaremos de regalo: *${giftToUse}*.\n\n` +
+    `¿Te separamos tu ticket con tu número favorito? ¡Muchas gracias por tu gran apoyo de siempre! ✨`;
   return `https://wa.me/${phoneWithCountry}?text=${encodeURIComponent(msg)}`;
 };
 
@@ -478,6 +807,15 @@ export default function JcrEventosPolladaApp() {
 
   // Estados de Configuración
   const [newMasterPinInput, setNewMasterPinInput] = useState<string>("");
+
+  // NUEVO: Ventana Emergente al Vender con Tarjeta Descargable + Clientes VIP
+  const [soldPopupData, setSoldPopupData] =
+    useState<SoldTicketPopupData | null>(null);
+  const [vipClients, setVipClients] = useState<VipClientRecord[]>([]);
+  const [selectedVipGift, setSelectedVipGift] = useState<string>(
+    "🎬 1 Cuenta Netflix Gratis"
+  );
+  const [vipSearch, setVipSearch] = useState<string>("");
 
   // Detectar si abrieron un Link Exclusivo de Vendedor (?modo=vendedor&vendedor=Nombre)
   useEffect(() => {
@@ -676,11 +1014,127 @@ export default function JcrEventosPolladaApp() {
       }
     );
 
+    // Escuchar Base de Datos Permanente de Clientes VIP (No se borra al cambiar de evento)
+    const vipDocRef = doc(
+      firestoreDb,
+      "artifacts",
+      APP_ID,
+      "public",
+      "data",
+      "jcr_vip_crm",
+      "clientes_colaboradores"
+    );
+
+    const unsubVip = onSnapshot(
+      vipDocRef,
+      (vipSnap) => {
+        if (vipSnap.exists()) {
+          const d = vipSnap.data();
+          if (d.clients) {
+            try {
+              const parsedVip = JSON.parse(d.clients);
+              if (Array.isArray(parsedVip)) setVipClients(parsedVip);
+            } catch (e) {
+              console.error(e);
+            }
+          }
+        }
+      },
+      (err) => console.warn("Aviso leyendo VIP CRM:", err)
+    );
+
     return () => {
       unsubList();
       unsubDoc();
+      unsubVip();
     };
   }, [dbReady, currentEventId]);
+
+  // Guardar en la Base de Datos Permanente de Clientes VIP
+  const saveVipClientsToCloud = async (nextVipList: VipClientRecord[]) => {
+    setVipClients(nextVipList);
+    if (!firestoreDb) return;
+    try {
+      const vipDocRef = doc(
+        firestoreDb,
+        "artifacts",
+        APP_ID,
+        "public",
+        "data",
+        "jcr_vip_crm",
+        "clientes_colaboradores"
+      );
+      await setDoc(
+        vipDocRef,
+        {
+          clients: JSON.stringify(nextVipList),
+          updatedAt: Date.now(),
+        },
+        { merge: true }
+      );
+    } catch (e) {
+      console.error("Error guardando Clientes VIP:", e);
+    }
+  };
+
+  // Abrir vista previa de Tarjeta Oficial para cualquier ticket vendido
+  const handleOpenTicketCardModal = async (t: TicketItem) => {
+    const msgText = buildThankYouSaleMessage(
+      t.code,
+      t.buyerName || "Cliente",
+      t.sellerName,
+      t.serviceType,
+      t.paymentStatus,
+      t.agreedPriceCents,
+      t.qrToken,
+      eventConfig
+    );
+    const cleanPhone = (t.buyerPhone || "").replace(/\D/g, "");
+    const phoneWithCountry = cleanPhone
+      ? cleanPhone.startsWith("51")
+        ? cleanPhone
+        : `51${cleanPhone}`
+      : "";
+    const waUrl = `https://wa.me/${phoneWithCountry}?text=${encodeURIComponent(
+      msgText
+    )}`;
+    const cardDataUrl = await generateTicketCardImage({
+      codesText: t.code,
+      buyerName: t.buyerName || "Cliente",
+      sellerName: t.sellerName,
+      serviceType: t.serviceType,
+      paymentStatus: t.paymentStatus,
+      totalCents: t.agreedPriceCents,
+      qrToken: t.qrToken,
+      cfg: eventConfig,
+    });
+
+    setSoldPopupData({
+      codesText: t.code,
+      buyerName: t.buyerName || "Cliente",
+      buyerPhone: t.buyerPhone || "",
+      sellerName: t.sellerName,
+      serviceType: t.serviceType,
+      paymentStatus: t.paymentStatus,
+      totalCents: t.agreedPriceCents,
+      qrToken: t.qrToken,
+      cardImageUrl: cardDataUrl,
+      whatsappUrl: waUrl,
+      whatsappMessageText: msgText,
+    });
+  };
+
+  // Descargar la imagen PNG de la Tarjeta del Ticket en el celular o laptop
+  const downloadTicketCardPng = (popup: SoldTicketPopupData) => {
+    if (!popup.cardImageUrl) return;
+    const link = document.createElement("a");
+    link.href = popup.cardImageUrl;
+    const cleanBuyer = (popup.buyerName || "Cliente").replace(/\s+/g, "_");
+    link.download = `Tarjeta_Ticket_${popup.codesText}_${cleanBuyer}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   // Guardar inmediatamente en Firebase con merge: true (Evita que un celular borre lo de otro)
   const saveToCloud = async (overrides: {
@@ -1145,6 +1599,103 @@ export default function JcrEventosPolladaApp() {
       auditLogs: nextLogs,
     });
 
+    // 1. Guardar o actualizar automáticamente al comprador en la Base de Datos Histórica de Clientes VIP
+    if (buyer && buyer !== "Cliente Directo") {
+      const normalizedKey =
+        phone.replace(/\D/g, "") || buyer.toLowerCase().trim();
+      const existingIdx = vipClients.findIndex(
+        (c) =>
+          (phone &&
+            c.buyerPhone.replace(/\D/g, "") === phone.replace(/\D/g, "")) ||
+          c.buyerName.toLowerCase().trim() === buyer.toLowerCase().trim()
+      );
+      let nextVipList = [...vipClients];
+      if (existingIdx >= 0) {
+        const prev = nextVipList[existingIdx];
+        nextVipList[existingIdx] = {
+          ...prev,
+          buyerName: buyer,
+          buyerPhone: phone || prev.buyerPhone,
+          totalTicketsBought: prev.totalTicketsBought + parsedPosNums.length,
+          lastTicketCode: codesText,
+          lastEventName: eventConfig.name,
+          lastSellerName: seller,
+          preferredService: posServiceType,
+          updatedAt: timeStr,
+        };
+      } else {
+        nextVipList = [
+          {
+            id: `VIP-${Date.now()}-${normalizedKey.slice(-4)}`,
+            buyerName: buyer,
+            buyerPhone: phone,
+            totalTicketsBought: parsedPosNums.length,
+            lastTicketCode: codesText,
+            lastEventName: eventConfig.name,
+            lastSellerName: seller,
+            preferredService: posServiceType,
+            assignedGift: selectedVipGift,
+            updatedAt: timeStr,
+          },
+          ...vipClients,
+        ];
+      }
+      saveVipClientsToCloud(nextVipList);
+    }
+
+    // 2. Generar la Tarjeta Visual del Ticket y hacer saltar el Modal de Venta Exitosa
+    const firstSoldTicket = nextTickets.find((t) => t.num === parsedPosNums[0]);
+    const qrTokenToShow = firstSoldTicket
+      ? firstSoldTicket.qrToken
+      : `${eventConfig.prefix}-${codesText}`;
+    const paymentStatusText = isSeparar ? "PENDIENTE" : "PAGADO";
+
+    const msgText = buildThankYouSaleMessage(
+      codesText,
+      buyer,
+      seller,
+      posServiceType,
+      paymentStatusText,
+      totalCents,
+      qrTokenToShow,
+      eventConfig
+    );
+
+    const cleanPhone = phone.replace(/\D/g, "");
+    const phoneWithCountry = cleanPhone
+      ? cleanPhone.startsWith("51")
+        ? cleanPhone
+        : `51${cleanPhone}`
+      : "";
+    const waUrl = `https://wa.me/${phoneWithCountry}?text=${encodeURIComponent(
+      msgText
+    )}`;
+
+    const cardDataUrl = await generateTicketCardImage({
+      codesText,
+      buyerName: buyer,
+      sellerName: seller,
+      serviceType: posServiceType,
+      paymentStatus: paymentStatusText,
+      totalCents,
+      qrToken: qrTokenToShow,
+      cfg: eventConfig,
+    });
+
+    setSoldPopupData({
+      codesText,
+      buyerName: buyer,
+      buyerPhone: phone,
+      sellerName: seller,
+      serviceType: posServiceType,
+      paymentStatus: paymentStatusText,
+      totalCents,
+      qrToken: qrTokenToShow,
+      cardImageUrl: cardDataUrl,
+      whatsappUrl: waUrl,
+      whatsappMessageText: msgText,
+    });
+
     const nextFree = nextTickets.find(
       (t) => t.assignmentStatus === "DISPONIBLE"
     );
@@ -1153,15 +1704,28 @@ export default function JcrEventosPolladaApp() {
     setPosBuyerPhone("");
     setPosYapeRef("");
     setPosDeliverNow(false);
+  };
 
-    notify(
-      isSeparar
-        ? `Ticket(s) #${codesText} separado(s) para ${buyer}. Guardado en Firebase.`
-        : `¡Venta exitosa! Ticket(s) #${codesText} por ${formatPEN(
-            totalCents
-          )} sincronizado en vivo.`,
-      "success"
-    );
+  // Subir imagen de fondo personalizada para la publicidad / tarjeta del ticket
+  const handleUploadCustomFlyerBg = (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      if (result) {
+        const nextCfg: EventConfig = { ...eventConfig, customFlyerBg: result };
+        setEventConfig(nextCfg);
+        saveToCloud({ eventConfig: nextCfg });
+        notify(
+          "¡Plantilla de imagen cargada! Todas las tarjetas de tickets usarán este fondo.",
+          "success"
+        );
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   // AGREGAR VENDEDOR Y GUARDAR EN FIREBASE AL INSTANTE
@@ -2123,22 +2687,27 @@ export default function JcrEventosPolladaApp() {
                 { id: "PADRON", label: "3. Padrón 250 Tickets", icon: QrCode },
                 { id: "DESPACHO", label: "4. Cocina y Despacho", icon: Utensils },
                 {
+                  id: "VIP",
+                  label: `🎁 5. Clientes VIP y Regalos (${vipClients.length})`,
+                  icon: Gift,
+                },
+                {
                   id: "GASTOS",
-                  label: "5. Fiesta, Barra y Gastos",
+                  label: "6. Fiesta, Barra y Gastos",
                   icon: ShoppingBag,
                 },
                 {
                   id: "VENDEDORES",
-                  label: `6. Vendedores (${sellers.length}) y Links`,
+                  label: `7. Vendedores (${sellers.length}) y Links`,
                   icon: Users,
                 },
-                { id: "CAJA", label: "7. Caja y Arqueo", icon: Wallet },
+                { id: "CAJA", label: "8. Caja y Arqueo", icon: Wallet },
                 {
                   id: "ANTIFRAUDE",
-                  label: `8. Historial Antifraude (${auditLogs.length})`,
+                  label: `9. Historial Antifraude (${auditLogs.length})`,
                   icon: ShieldAlert,
                 },
-                { id: "CONFIG", label: "9. Configuración 🔒", icon: Settings },
+                { id: "CONFIG", label: "10. Configuración 🔒", icon: Settings },
               ].map((item) => {
                 const Icon = item.icon;
                 const isAct = activeTab === item.id;
@@ -2587,14 +3156,16 @@ export default function JcrEventosPolladaApp() {
                               </button>
                             </>
                           )}
-                          <a
-                            href={buildWhatsAppTicketUrl(t, eventConfig)}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="w-full py-2 px-3 rounded-xl bg-stone-900 text-white text-xs font-black text-center"
+                          <button
+                            type="button"
+                            onClick={() => handleOpenTicketCardModal(t)}
+                            className="w-full py-2.5 px-3 rounded-xl bg-stone-900 hover:bg-stone-800 text-amber-300 text-xs font-black text-center flex items-center justify-center gap-1.5 shadow"
                           >
-                            🎟️ Enviar Ticket Oficial QR por WhatsApp
-                          </a>
+                            <ImageIcon className="w-4 h-4" />
+                            <span>
+                              🖼️ Ver / Descargar Tarjeta y Enviar WhatsApp
+                            </span>
+                          </button>
                         </div>
                       </div>
                     );
@@ -2708,17 +3279,18 @@ export default function JcrEventosPolladaApp() {
                       )}
 
                     {inspectedTicket.assignmentStatus !== "DISPONIBLE" && (
-                      <a
-                        href={buildWhatsAppTicketUrl(
-                          inspectedTicket,
-                          eventConfig
-                        )}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="w-full py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-black text-center"
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleOpenTicketCardModal(inspectedTicket)
+                        }
+                        className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black text-center flex items-center justify-center gap-1.5 shadow"
                       >
-                        📲 Enviar Ticket QR por WhatsApp al Cliente
-                      </a>
+                        <ImageIcon className="w-4 h-4" />
+                        <span>
+                          🖼️ Ver / Descargar Tarjeta y Enviar por WhatsApp
+                        </span>
+                      </button>
                     )}
                   </div>
                 </div>
@@ -3744,17 +4316,18 @@ export default function JcrEventosPolladaApp() {
 
                         {inspectedTicket.assignmentStatus !== "DISPONIBLE" && (
                           <>
-                            <a
-                              href={buildWhatsAppTicketUrl(
-                                inspectedTicket,
-                                eventConfig
-                              )}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="px-4 py-3 rounded-2xl bg-emerald-600 text-white text-xs font-black shadow"
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleOpenTicketCardModal(inspectedTicket)
+                              }
+                              className="px-4 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow flex items-center gap-1.5"
                             >
-                              📲 Enviar Ticket por WhatsApp
-                            </a>
+                              <ImageIcon className="w-4 h-4" />
+                              <span>
+                                🖼️ Generar Tarjeta y Enviar por WhatsApp
+                              </span>
+                            </button>
                             <button
                               onClick={() =>
                                 handleVoidTicket(inspectedTicket.num)
@@ -3769,6 +4342,232 @@ export default function JcrEventosPolladaApp() {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* ================================================================
+                NUEVA PESTAÑA: CLIENTES VIP Y REGALOS (NETFLIX / DISNEY+) + DISEÑO DE TARJETA
+            ================================================================= */}
+            {activeTab === "VIP" && (
+              <div className="space-y-6">
+                {/* 1. Configurador de Plantilla Publicitaria de los Tickets */}
+                <div className="bg-white rounded-3xl shadow-sm border-2 border-amber-400 p-5 sm:p-6 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-4 border-b border-stone-200 pb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 rounded-2xl bg-amber-100 text-amber-900">
+                        <ImageIcon className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <span className="text-[11px] font-black uppercase tracking-wider text-orange-600">
+                          Generador Gráfico de Publicidad y Tickets
+                        </span>
+                        <h2 className="text-xl font-black text-stone-900">
+                          1. Imagen Predefinida de tus Tickets Publicitarios
+                        </h2>
+                        <p className="text-xs text-stone-600">
+                          Por defecto usamos el diseño oficial de{" "}
+                          <strong>JCR EVENTOS</strong>, pero aquí puedes subir
+                          un flyer o fondo propio para que el sistema estampe
+                          encima los datos de cada venta.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="cursor-pointer px-4 py-2.5 rounded-xl bg-stone-900 hover:bg-stone-800 text-amber-300 text-xs font-black flex items-center gap-1.5 shadow">
+                        <ImageIcon className="w-4 h-4" />
+                        <span>Subir Imagen de Fondo (.JPG / .PNG)</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleUploadCustomFlyerBg}
+                          className="hidden"
+                        />
+                      </label>
+                      {eventConfig.customFlyerBg && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const nextCfg: EventConfig = {
+                              ...eventConfig,
+                              customFlyerBg: "",
+                            };
+                            setEventConfig(nextCfg);
+                            saveToCloud({ eventConfig: nextCfg });
+                            notify(
+                              "Restaurado el diseño clásico de JCR EVENTOS.",
+                              "info"
+                            );
+                          }}
+                          className="px-3 py-2.5 rounded-xl bg-red-100 text-red-900 text-xs font-black"
+                        >
+                          Usar Fondo Predefinido
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleOpenTicketCardModal(tickets[0])}
+                        className="px-4 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-black shadow"
+                      >
+                        👁️ Ver Ejemplo de Tarjeta Ahora
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Base de Datos Permanente de Clientes VIP Colaboradores + Oferta de Regalos */}
+                <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-5">
+                  <div className="flex flex-wrap items-center justify-between gap-4 border-b border-stone-200 pb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-3 rounded-2xl bg-purple-100 text-purple-900">
+                        <Gift className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <span className="text-[11px] font-black uppercase tracking-wider text-purple-700">
+                          Base de Datos Permanente en Firebase (No se borra al
+                          crear otro evento)
+                        </span>
+                        <h2 className="text-xl font-black text-stone-900">
+                          2. Clientes VIP Colaboradores ({vipClients.length}) —
+                          Re-Invitación con Regalos
+                        </h2>
+                        <p className="text-xs text-stone-600">
+                          Cada cliente que compra un ticket queda guardado aquí
+                          automáticamente para invitarlo a futuras polladas
+                          ofreciéndole una cuenta Netflix, Disney+ o un regalo
+                          especial.
+                        </p>
+                      </div>
+                    </div>
+
+                    <input
+                      type="text"
+                      value={vipSearch}
+                      onChange={(e) => setVipSearch(e.target.value)}
+                      placeholder="Buscar cliente o celular..."
+                      className="px-3.5 py-2.5 rounded-xl border border-stone-300 text-xs font-bold w-60"
+                    />
+                  </div>
+
+                  {/* Selector rápido de Regalo / Incentivo para ofrecer */}
+                  <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-50 to-amber-50 border border-purple-200 space-y-3">
+                    <label className="block text-xs font-black text-purple-950">
+                      🎁 ¿Qué regalo deseas ofrecerles por colaborar en tu nueva
+                      actividad?
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        "🎬 1 Cuenta Netflix Gratis",
+                        "🏰 1 Cuenta Disney+ Gratis",
+                        "🎵 1 Cuenta Spotify / YouTube Premium",
+                        "🥤 1 Gaseosa Helada Gratis con su Pollada",
+                        "🎟️ 1 Opción Doble para el Sorteo VIP",
+                      ].map((giftOption) => (
+                        <button
+                          key={giftOption}
+                          type="button"
+                          onClick={() => setSelectedVipGift(giftOption)}
+                          className={`px-3 py-2 rounded-xl text-xs font-black border transition ${
+                            selectedVipGift === giftOption
+                              ? "bg-purple-800 text-white border-purple-900 shadow"
+                              : "bg-white text-stone-800 border-purple-200 hover:bg-purple-100"
+                          }`}
+                        >
+                          {giftOption}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <span className="text-xs font-bold text-stone-700">
+                        O escribe tu propio regalo:
+                      </span>
+                      <input
+                        type="text"
+                        value={selectedVipGift}
+                        onChange={(e) => setSelectedVipGift(e.target.value)}
+                        className="flex-1 min-w-[240px] p-2 rounded-xl border border-purple-300 bg-white text-xs font-black text-purple-950"
+                      />
+                    </div>
+                  </div>
+
+                  {vipClients.length === 0 ? (
+                    <div className="p-8 text-center rounded-2xl bg-stone-50 border border-stone-200 space-y-2">
+                      <Sparkles className="w-8 h-8 text-amber-500 mx-auto" />
+                      <p className="text-sm font-black text-stone-800">
+                        Tu Base de Datos VIP está lista
+                      </p>
+                      <p className="text-xs text-stone-500">
+                        Conforme vendas tickets en la pestaña 1, los nombres y
+                        celulares de tus clientes se guardarán automáticamente
+                        aquí para tus próximas actividades.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="grid md:grid-cols-2 gap-3">
+                      {vipClients
+                        .filter((c) => {
+                          const q = vipSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return (
+                            c.buyerName.toLowerCase().includes(q) ||
+                            c.buyerPhone.toLowerCase().includes(q) ||
+                            c.lastSellerName.toLowerCase().includes(q)
+                          );
+                        })
+                        .map((client) => (
+                          <div
+                            key={client.id}
+                            className="p-4 rounded-2xl border border-stone-200 bg-stone-50 flex flex-col justify-between gap-3 shadow-sm"
+                          >
+                            <div className="flex justify-between items-start gap-2">
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <h3 className="font-black text-base text-stone-900">
+                                    🌟 {client.buyerName}
+                                  </h3>
+                                  <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-900 text-[10px] font-black">
+                                    {client.totalTicketsBought} pollada(s)
+                                  </span>
+                                </div>
+                                <p className="text-xs text-stone-600 mt-0.5">
+                                  WhatsApp:{" "}
+                                  <strong>
+                                    {client.buyerPhone || "Sin número"}
+                                  </strong>{" "}
+                                  • Atendido por:{" "}
+                                  <strong>{client.lastSellerName}</strong>
+                                </p>
+                                <p className="text-[11px] text-stone-500">
+                                  Última colaboración: Ticket #
+                                  {client.lastTicketCode} ({client.lastEventName}
+                                  )
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-stone-200">
+                              <span className="text-[11px] font-bold text-purple-900 truncate max-w-[200px]">
+                                🎁 {selectedVipGift}
+                              </span>
+                              <a
+                                href={buildVipGiftInviteWhatsAppUrl(
+                                  { ...client, assignedGift: selectedVipGift },
+                                  eventConfig,
+                                  selectedVipGift
+                                )}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-1.5 shadow"
+                              >
+                                <MessageCircle className="w-4 h-4" />
+                                <span>📲 Invitar + Ofrecer Regalo WA</span>
+                              </a>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -4685,7 +5484,7 @@ export default function JcrEventosPolladaApp() {
               { id: "VENDER", label: "Vender", icon: Ticket },
               { id: "DASHBOARD", label: "Dashboard", icon: BarChart3 },
               { id: "PADRON", label: "250 Tkt", icon: QrCode },
-              { id: "DESPACHO", label: "Cocina", icon: Utensils },
+              { id: "VIP", label: "VIP/Regalo", icon: Gift },
               { id: "VENDEDORES", label: "Vendedores", icon: Users },
               { id: "CAJA", label: "Caja", icon: Wallet },
             ].map((tab) => {
@@ -4708,6 +5507,102 @@ export default function JcrEventosPolladaApp() {
             })}
           </nav>
         </>
+      )}
+
+      {/* ======================================================================
+          VENTANA EMERGENTE (POPUP) AL VENDER: TARJETA DEL TICKET + WHATSAPP
+      ======================================================================= */}
+      {soldPopupData && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-5 sm:p-6 space-y-4 shadow-2xl border-2 border-amber-400 my-auto max-h-[94vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-stone-200 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-2xl bg-emerald-100 text-emerald-700">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 block">
+                    {soldPopupData.paymentStatus === "PAGADO"
+                      ? "¡SE VENDIÓ EXITOSAMENTE EL TICKET!"
+                      : "¡TICKET SEPARADO EXITOSAMENTE!"}
+                  </span>
+                  <h3 className="font-black text-lg text-stone-900">
+                    Ticket N.º #{soldPopupData.codesText} —{" "}
+                    {soldPopupData.buyerName}
+                  </h3>
+                </div>
+              </div>
+              <button
+                onClick={() => setSoldPopupData(null)}
+                className="p-1.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Vista Previa de la Tarjeta Publicitaria Generada */}
+            {soldPopupData.cardImageUrl && (
+              <div className="rounded-2xl overflow-hidden border-2 border-stone-800 shadow-lg bg-stone-900">
+                <img
+                  src={soldPopupData.cardImageUrl}
+                  alt={`Tarjeta Ticket ${soldPopupData.codesText}`}
+                  className="w-full h-auto max-h-[380px] object-contain mx-auto"
+                />
+              </div>
+            )}
+
+            {/* Texto autogenerado según modalidad (Comer en Local, Llevar o Delivery) */}
+            <div className="p-3.5 rounded-2xl bg-stone-50 border border-stone-200 space-y-1.5">
+              <span className="text-[10px] font-black uppercase text-stone-500 block">
+                Mensaje personalizado listo para enviar al cliente:
+              </span>
+              <p className="text-xs text-stone-800 whitespace-pre-line font-medium leading-relaxed">
+                {soldPopupData.whatsappMessageText}
+              </p>
+            </div>
+
+            {/* Botón Principal: Descarga la Tarjeta .PNG y Abre WhatsApp con el Texto */}
+            <div className="space-y-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  downloadTicketCardPng(soldPopupData);
+                  window.open(soldPopupData.whatsappUrl, "_blank");
+                }}
+                className="w-full py-4 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 text-white font-black text-sm shadow-lg flex items-center justify-center gap-2 transition transform active:scale-95"
+              >
+                <MessageCircle className="w-5 h-5 shrink-0" />
+                <span>
+                  📲 Descargar Tarjeta + Enviar por WhatsApp al Cliente
+                </span>
+              </button>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    downloadTicketCardPng(soldPopupData);
+                    notify(
+                      "Tarjeta descargada en tu dispositivo (.PNG).",
+                      "success"
+                    );
+                  }}
+                  className="py-2.5 px-3 rounded-xl bg-stone-900 text-amber-300 text-xs font-black flex items-center justify-center gap-1.5"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Solo Descargar Imagen</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSoldPopupData(null)}
+                  className="py-2.5 px-3 rounded-xl bg-stone-200 hover:bg-stone-300 text-stone-800 text-xs font-black"
+                >
+                  Listo / Seguir Vendiendo
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* MODAL CLAVE MAESTRA */}
