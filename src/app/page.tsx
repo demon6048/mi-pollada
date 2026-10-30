@@ -41,6 +41,8 @@ import {
   Trash2,
   Monitor,
   UserPlus,
+  BarChart3,
+  MessageCircle,
 } from "lucide-react";
 
 /**
@@ -227,6 +229,14 @@ const createInitial250Tickets = (
 
 const createInitialBarItems = (): BarItem[] => [
   {
+    id: "BAR-CERVEZA",
+    name: "Cerveza 600ml",
+    unitPriceCents: 1000,
+    stock: 36,
+    soldQty: 0,
+    totalRevenueCents: 0,
+  },
+  {
     id: "BAR-GASEOSA",
     name: "Gaseosa Personal",
     unitPriceCents: 400,
@@ -235,10 +245,10 @@ const createInitialBarItems = (): BarItem[] => [
     totalRevenueCents: 0,
   },
   {
-    id: "BAR-CERVEZA",
-    name: "Cerveza 600ml",
-    unitPriceCents: 1000,
-    stock: 36,
+    id: "BAR-CIGARROS",
+    name: "Cigarros (Unidad / Cajetilla)",
+    unitPriceCents: 200,
+    stock: 40,
     soldQty: 0,
     totalRevenueCents: 0,
   },
@@ -259,6 +269,44 @@ const createInitialBarItems = (): BarItem[] => [
     totalRevenueCents: 0,
   },
 ];
+
+// Generador de enlace de WhatsApp para enviar el Ticket Oficial QR
+const buildWhatsAppTicketUrl = (t: TicketItem, cfg: EventConfig): string => {
+  const cleanPhone = (t.buyerPhone || "").replace(/\D/g, "");
+  const phoneWithCountry = cleanPhone
+    ? cleanPhone.startsWith("51")
+      ? cleanPhone
+      : `51${cleanPhone}`
+    : "";
+  const msg =
+    `🍗 *JCR EVENTOS - ${cfg.name.toUpperCase()}*\n` +
+    `🎟️ Ticket Oficial N.º *${t.code}*\n` +
+    `👤 Cliente: *${t.buyerName || "Cliente"}*\n` +
+    `🧑‍💼 Atendido por: ${t.sellerName}\n` +
+    `💳 Estado de Pago: *${t.paymentStatus}* (${formatPEN(t.paidCents)})\n` +
+    `🔐 Token QR Antifraude: *${t.qrToken}*\n` +
+    `📍 Lugar: ${cfg.address}`;
+  return `https://wa.me/${phoneWithCountry}?text=${encodeURIComponent(msg)}`;
+};
+
+// Generador de enlace de WhatsApp amigable para cobrar pagos inconclusos / pendientes
+const buildWhatsAppPaymentReminderUrl = (
+  t: TicketItem,
+  cfg: EventConfig
+): string => {
+  const cleanPhone = (t.buyerPhone || "").replace(/\D/g, "");
+  const phoneWithCountry = cleanPhone
+    ? cleanPhone.startsWith("51")
+      ? cleanPhone
+      : `51${cleanPhone}`
+    : "";
+  const pendingCents = Math.max(0, t.agreedPriceCents - (t.paidCents || 0));
+  const msg =
+    `Hola *${t.buyerName || "amigo(a)"}* 👋, te saludamos cordialmente de *JCR EVENTOS (${cfg.name})*.\n\n` +
+    `🔔 *Aviso amigable del sistema:* Detectamos que tu *Ticket N.º ${t.code}* (registrado con *${t.sellerName}*) figura todavía con un *pago pendiente de ${formatPEN(pendingCents)}*.\n\n` +
+    `Por favor, ayúdanos completando tu pago por *Yape/Plin* o en efectivo antes de recoger tu pedido para dejar tu pollada 100% confirmada en el sistema. ¡Muchas gracias por tu apoyo y colaboración! 🍗✨`;
+  return `https://wa.me/${phoneWithCountry}?text=${encodeURIComponent(msg)}`;
+};
 
 const createInitialSellers = (): SellerRecord[] => [
   {
@@ -834,10 +882,62 @@ export default function JcrEventosPolladaApp() {
     const gananciaNetaCents =
       cobradoTicketsCents + ingresosBarraCents - gastosTotalesCents;
 
-    // Estadísticas exclusivas del vendedor activo en este celular
+    // Ganancia unitaria por cada pollada (Precio Venta - Costo Plato)
+    const gananciaUnitariaPolladaCents = Math.max(
+      0,
+      eventConfig.unitPriceCents - eventConfig.unitCostCents
+    );
+    const gananciaTotalPolladasPagadasCents =
+      pagados * gananciaUnitariaPolladaCents;
+    const gananciaProyectadaPolladasCents =
+      (pagados + separados) * gananciaUnitariaPolladaCents;
+
+    // Desglose detallado en tiempo real por cada vendedor (Polladas aparte de la Barra)
+    const sellerBreakdown = sellers.map((s) => {
+      const assigned = tickets.filter(
+        (t) => t.sellerName === s.name && t.assignmentStatus !== "DISPONIBLE"
+      );
+      const paidList = assigned.filter((t) => t.paymentStatus === "PAGADO");
+      const unpaidList = assigned.filter((t) => t.paymentStatus !== "PAGADO");
+      const recaudadoPolladasCents = assigned.reduce(
+        (acc, t) => acc + (t.paidCents || 0),
+        0
+      );
+      const porCobrarClientesCents =
+        unpaidList.length * eventConfig.unitPriceCents;
+      const gananciaPolladasVendedorCents =
+        paidList.length * gananciaUnitariaPolladaCents;
+      const gananciaProyectadaVendedorCents =
+        assigned.length * gananciaUnitariaPolladaCents;
+      const efectivoPorRendirCents = Math.max(
+        0,
+        s.cashInHandCents - s.settledCents
+      );
+
+      return {
+        seller: s,
+        totalTickets: assigned.length,
+        paidCount: paidList.length,
+        unpaidCount: unpaidList.length,
+        recaudadoPolladasCents,
+        porCobrarClientesCents,
+        gananciaPolladasVendedorCents,
+        gananciaProyectadaVendedorCents,
+        efectivoPorRendirCents,
+        ticketsList: assigned,
+        unpaidTicketsList: unpaidList,
+      };
+    });
+
+    // Estadísticas del vendedor seleccionado actualmente en el formulario o celular
+    const currentSellerName =
+      viewMode === "SOLO_VENDEDOR"
+        ? posSellerName || activeOperator
+        : activeOperator;
     const misTicketsVendidos = tickets.filter(
       (t) =>
-        t.sellerName === activeOperator && t.assignmentStatus !== "DISPONIBLE"
+        t.sellerName === currentSellerName &&
+        t.assignmentStatus !== "DISPONIBLE"
     );
     const misTicketsPagados = misTicketsVendidos.filter(
       (t) => t.paymentStatus === "PAGADO"
@@ -845,7 +945,9 @@ export default function JcrEventosPolladaApp() {
     const misTicketsSeparados = misTicketsVendidos.filter(
       (t) => t.paymentStatus !== "PAGADO"
     ).length;
-    const miSellerRecord = sellers.find((s) => s.name === activeOperator);
+    const miGananciaPolladasCents =
+      misTicketsPagados * gananciaUnitariaPolladaCents;
+    const miSellerRecord = sellers.find((s) => s.name === currentSellerName);
     const miEfectivoPorRendirCents = miSellerRecord
       ? Math.max(0, miSellerRecord.cashInHandCents - miSellerRecord.settledCents)
       : 0;
@@ -867,10 +969,16 @@ export default function JcrEventosPolladaApp() {
       faltaRendirVendedoresCents,
       platosQuedan,
       gananciaNetaCents,
+      gananciaUnitariaPolladaCents,
+      gananciaTotalPolladasPagadasCents,
+      gananciaProyectadaPolladasCents,
+      sellerBreakdown,
       misTicketsTotal: misTicketsVendidos.length,
       misTicketsPagados,
       misTicketsSeparados,
+      miGananciaPolladasCents,
       miEfectivoPorRendirCents,
+      misTicketsList: misTicketsVendidos,
     };
   }, [
     tickets,
@@ -883,6 +991,8 @@ export default function JcrEventosPolladaApp() {
     conteoFisicoRealCents,
     eventConfig,
     activeOperator,
+    posSellerName,
+    viewMode,
   ]);
 
   const parsedPosNums = useMemo(() => {
@@ -928,11 +1038,8 @@ export default function JcrEventosPolladaApp() {
 
     const buyer = posBuyerName.trim() || "Cliente Directo";
     const phone = posBuyerPhone.trim();
-    // Si está en Modo Exclusivo Vendedor, forzamos que el vendedor sea el operador activo
-    const seller =
-      viewMode === "SOLO_VENDEDOR"
-        ? activeOperator
-        : posSellerName || activeOperator;
+    // Respetamos el vendedor seleccionado en el formulario de venta
+    const seller = posSellerName || activeOperator;
     const isSeparar = posPayMode === "SOLO_SEPARAR";
     const totalCents = parsedPosNums.length * eventConfig.unitPriceCents;
     const timeStr = getPeruTimeStr();
@@ -1998,35 +2105,35 @@ export default function JcrEventosPolladaApp() {
                     <Download className="w-3.5 h-3.5 text-orange-600" />
                     <span className="hidden sm:inline">Excel</span>
                   </button>
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* Menú de 8 Módulos SOLO visible cuando estás en PANEL_COMPLETO (Laptop) */}
+          {/* Menú de Módulos SOLO visible cuando estás en PANEL_COMPLETO (Laptop) */}
           {viewMode === "PANEL_COMPLETO" && (
             <nav className="hidden lg:flex items-center gap-1.5 mt-3 pt-2.5 border-t border-white/10 overflow-x-auto">
               {[
                 { id: "VENDER", label: "1. Vender Pollada y Barra", icon: Ticket },
-                { id: "PADRON", label: "2. Padrón 250 Tickets", icon: QrCode },
-                { id: "DESPACHO", label: "3. Cocina y Despacho", icon: Utensils },
+                {
+                  id: "DASHBOARD",
+                  label: "📊 2. Dashboard Ganancias y Cobros",
+                  icon: BarChart3,
+                },
+                { id: "PADRON", label: "3. Padrón 250 Tickets", icon: QrCode },
+                { id: "DESPACHO", label: "4. Cocina y Despacho", icon: Utensils },
                 {
                   id: "GASTOS",
-                  label: "4. Fiesta, Barra y Gastos",
+                  label: "5. Fiesta, Barra y Gastos",
                   icon: ShoppingBag,
                 },
                 {
                   id: "VENDEDORES",
-                  label: `5. Vendedores (${sellers.length}) y Links`,
+                  label: `6. Vendedores (${sellers.length}) y Links`,
                   icon: Users,
                 },
-                { id: "CAJA", label: "6. Caja, Yape y Ganancia", icon: Wallet },
+                { id: "CAJA", label: "7. Caja y Arqueo", icon: Wallet },
                 {
                   id: "ANTIFRAUDE",
-                  label: `7. Historial Antifraude (${auditLogs.length})`,
+                  label: `8. Historial Antifraude (${auditLogs.length})`,
                   icon: ShieldAlert,
                 },
-                { id: "CONFIG", label: "8. Configuración 🔒", icon: Settings },
+                { id: "CONFIG", label: "9. Configuración 🔒", icon: Settings },
               ].map((item) => {
                 const Icon = item.icon;
                 const isAct = activeTab === item.id;
@@ -2034,7 +2141,7 @@ export default function JcrEventosPolladaApp() {
                   <button
                     key={item.id}
                     onClick={() => setActiveTab(item.id)}
-                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black whitespace-nowrap transition ${
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black whitespace-nowrap transition ${
                       isAct
                         ? "bg-amber-400 text-stone-950 shadow"
                         : "text-stone-200 hover:bg-white/10"
@@ -2086,7 +2193,7 @@ export default function JcrEventosPolladaApp() {
       ======================================================================= */}
       {viewMode === "SOLO_VENDEDOR" && (
         <main className="max-w-xl mx-auto px-3 py-4 space-y-4">
-          {/* Resumen limpio del vendedor */}
+          {/* Resumen limpio del vendedor con su ganancia de polladas en tiempo real */}
           <div className="bg-gradient-to-r from-stone-900 to-stone-800 text-white rounded-3xl p-4 shadow-md border border-amber-500/30">
             <div className="flex items-center justify-between border-b border-white/10 pb-2.5 mb-3">
               <div>
@@ -2094,69 +2201,92 @@ export default function JcrEventosPolladaApp() {
                   TERMINAL MÓVIL EXCLUSIVA DE VENTA
                 </span>
                 <h2 className="text-base font-black">
-                  Vendedor: {activeOperator}
+                  Vendedor Activo: {posSellerName || activeOperator}
                 </h2>
               </div>
               <span className="text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2.5 py-1 rounded-full">
-                🔒 Modo Seguro
+                🔒 Modo Vendedor
               </span>
             </div>
 
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="bg-white/10 rounded-2xl p-2.5">
-                <span className="text-[10px] text-stone-300 font-bold block">
-                  Tickets Libres
+            <div className="grid grid-cols-4 gap-2 text-center">
+              <div className="bg-white/10 rounded-2xl p-2">
+                <span className="text-[9px] text-stone-300 font-bold block">
+                  Libres
                 </span>
-                <strong className="text-xl font-black text-amber-300">
+                <strong className="text-lg font-black text-amber-300">
                   {metrics.disponibles}
                 </strong>
               </div>
-              <div className="bg-white/10 rounded-2xl p-2.5">
-                <span className="text-[10px] text-stone-300 font-bold block">
+              <div className="bg-white/10 rounded-2xl p-2">
+                <span className="text-[9px] text-stone-300 font-bold block">
                   Mis Ventas
                 </span>
-                <strong className="text-xl font-black text-white">
+                <strong className="text-lg font-black text-white">
                   {metrics.misTicketsTotal}
                 </strong>
+                <span className="block text-[8px] text-stone-300">
+                  ({metrics.misTicketsPagados} pag / {metrics.misTicketsSeparados}{" "}
+                  deb)
+                </span>
               </div>
-              <div className="bg-white/10 rounded-2xl p-2.5">
-                <span className="text-[10px] text-stone-300 font-bold block">
+              <div className="bg-emerald-500/20 border border-emerald-400/30 rounded-2xl p-2">
+                <span className="text-[9px] text-emerald-200 font-bold block">
+                  Ganancia Poll.
+                </span>
+                <strong className="text-sm font-black text-emerald-300">
+                  {formatPEN(metrics.miGananciaPolladasCents)}
+                </strong>
+              </div>
+              <div className="bg-white/10 rounded-2xl p-2">
+                <span className="text-[9px] text-stone-300 font-bold block">
                   Por Rendir
                 </span>
-                <strong className="text-base font-black text-emerald-300">
+                <strong className="text-sm font-black text-amber-200">
                   {formatPEN(metrics.miEfectivoPorRendirCents)}
                 </strong>
               </div>
             </div>
           </div>
 
-          {/* Selector de 2 pestañas simples para el Vendedor */}
-          <div className="grid grid-cols-2 gap-2 bg-stone-200 p-1.5 rounded-2xl">
+          {/* Selector de 3 pestañas simples para el Vendedor en su Celular */}
+          <div className="grid grid-cols-3 gap-1.5 bg-stone-200 p-1.5 rounded-2xl">
             <button
               onClick={() => setSellerMobileSubTab("VENDER_TICKET")}
-              className={`py-3 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition ${
+              className={`py-2.5 px-2 rounded-xl text-[11px] font-black flex items-center justify-center gap-1 transition ${
                 sellerMobileSubTab === "VENDER_TICKET"
                   ? "bg-orange-600 text-white shadow"
                   : "text-stone-700"
               }`}
             >
-              <Ticket className="w-4 h-4" />
-              <span>1. Vender Ticket</span>
+              <Ticket className="w-3.5 h-3.5 shrink-0" />
+              <span>1. Vender</span>
+            </button>
+            <button
+              onClick={() => setSellerMobileSubTab("MIS_CLIENTES")}
+              className={`py-2.5 px-2 rounded-xl text-[11px] font-black flex items-center justify-center gap-1 transition ${
+                sellerMobileSubTab === "MIS_CLIENTES"
+                  ? "bg-emerald-700 text-white shadow"
+                  : "text-stone-700"
+              }`}
+            >
+              <MessageCircle className="w-3.5 h-3.5 shrink-0" />
+              <span>2. Mis Clientes ({metrics.misTicketsTotal})</span>
             </button>
             <button
               onClick={() => setSellerMobileSubTab("VER_PADRON")}
-              className={`py-3 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition ${
+              className={`py-2.5 px-2 rounded-xl text-[11px] font-black flex items-center justify-center gap-1 transition ${
                 sellerMobileSubTab === "VER_PADRON"
                   ? "bg-stone-900 text-white shadow"
                   : "text-stone-700"
               }`}
             >
-              <QrCode className="w-4 h-4" />
-              <span>2. Ver 250 Tickets / WhatsApp</span>
+              <QrCode className="w-3.5 h-3.5 shrink-0" />
+              <span>3. 250 Tickets</span>
             </button>
           </div>
 
-          {/* SUB-PESTAÑA MÓVIL 1: FORMULARIO DE VENTA DE TICKETS */}
+          {/* SUB-PESTAÑA MÓVIL 1: FORMULARIO DE VENTA DE TICKETS CON SELECTOR DE VENDEDOR */}
           {sellerMobileSubTab === "VENDER_TICKET" && (
             <div className="bg-white rounded-3xl shadow-md border border-stone-200 p-5 space-y-4">
               <div className="flex items-center justify-between border-b pb-3">
@@ -2180,6 +2310,42 @@ export default function JcrEventosPolladaApp() {
                 >
                   ⚡ N.º Libre
                 </button>
+              </div>
+
+              {/* NUEVO: Selección clara de QUIÉN ESTÁ VENDIENDO EL TICKET (Conectado a Firebase) */}
+              <div className="p-3.5 rounded-2xl bg-amber-50 border-2 border-amber-400">
+                <label className="block text-xs font-black text-stone-900 mb-1">
+                  👤 ¿Quién está vendiendo este ticket? (Vendedor Responsable)
+                </label>
+                {lockedSellerByLink && !isMasterUnlocked ? (
+                  <div className="flex items-center justify-between bg-white px-3 py-2.5 rounded-xl border border-amber-300">
+                    <span className="font-black text-sm text-stone-900">
+                      {posSellerName || activeOperator}
+                    </span>
+                    <span className="text-[10px] font-black bg-amber-200 text-amber-950 px-2 py-0.5 rounded">
+                      Asignado a tu Link 🔒
+                    </span>
+                  </div>
+                ) : (
+                  <select
+                    value={posSellerName}
+                    onChange={(e) => {
+                      setPosSellerName(e.target.value);
+                      setActiveOperator(e.target.value);
+                    }}
+                    className="w-full p-3 rounded-xl border-2 border-amber-500 bg-white text-sm font-black text-stone-900 focus:outline-none"
+                  >
+                    {sellers.map((s) => (
+                      <option key={s.id} value={s.name}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <span className="block text-[11px] font-bold text-amber-900 mt-1.5">
+                  ✓ Esta venta sumará a las polladas y ganancias de{" "}
+                  <strong>{posSellerName || activeOperator}</strong>.
+                </span>
               </div>
 
               <div className="grid grid-cols-12 gap-3">
@@ -2316,7 +2482,124 @@ export default function JcrEventosPolladaApp() {
             </div>
           )}
 
-          {/* SUB-PESTAÑA MÓVIL 2: PADRÓN DE CONSULTA Y ENVÍO DE WHATSAPP */}
+          {/* SUB-PESTAÑA MÓVIL 2: MIS CLIENTES VENDIDOS Y RECORDATORIO AMIGABLE DE WHATSAPP */}
+          {sellerMobileSubTab === "MIS_CLIENTES" && (
+            <div className="bg-white rounded-3xl shadow-md border border-stone-200 p-4 space-y-4">
+              <div className="border-b pb-3">
+                <span className="text-[10px] font-black uppercase text-emerald-700">
+                  Control de Clientes de {posSellerName || activeOperator}
+                </span>
+                <h3 className="text-base font-black text-stone-900">
+                  Mis Tickets Vendidos y Cobranza por WhatsApp
+                </h3>
+                <p className="text-xs text-stone-600">
+                  Envía su ticket QR o mándale un recordatorio amigable a los
+                  que aún tienen pago inconcluso.
+                </p>
+              </div>
+
+              {metrics.misTicketsList.length === 0 ? (
+                <p className="text-xs text-stone-500 text-center py-6">
+                  Aún no tienes tickets registrados a nombre de{" "}
+                  <strong>{posSellerName || activeOperator}</strong>.
+                </p>
+              ) : (
+                <div className="space-y-3 max-h-[460px] overflow-y-auto pr-1">
+                  {metrics.misTicketsList.map((t) => {
+                    const isPaid = t.paymentStatus === "PAGADO";
+                    return (
+                      <div
+                        key={t.num}
+                        className={`p-3.5 rounded-2xl border-2 space-y-2.5 ${
+                          isPaid
+                            ? "bg-emerald-50/60 border-emerald-300"
+                            : "bg-amber-50 border-amber-400"
+                        }`}
+                      >
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className="font-mono font-black text-sm text-stone-900">
+                              Ticket #{t.code}
+                            </span>{" "}
+                            <span
+                              className={`text-[10px] font-black px-2 py-0.5 rounded uppercase ${
+                                isPaid
+                                  ? "bg-emerald-200 text-emerald-950"
+                                  : "bg-amber-300 text-amber-950"
+                              }`}
+                            >
+                              {isPaid ? "PAGADO ✓" : "FALTA PAGAR ⏳"}
+                            </span>
+                            <h4 className="font-black text-sm text-stone-900 mt-0.5">
+                              {t.buyerName}
+                            </h4>
+                            <p className="text-[11px] text-stone-600">
+                              Celular:{" "}
+                              <strong>{t.buyerPhone || "No anotado"}</strong> •{" "}
+                              {t.serviceType}
+                            </p>
+                          </div>
+                          <span className="font-black text-sm text-stone-900">
+                            {formatPEN(t.agreedPriceCents)}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap gap-1.5">
+                          {!isPaid && (
+                            <>
+                              <a
+                                href={buildWhatsAppPaymentReminderUrl(
+                                  t,
+                                  eventConfig
+                                )}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="w-full py-2.5 px-3 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black text-center flex items-center justify-center gap-1.5 shadow-sm"
+                              >
+                                <MessageCircle className="w-4 h-4" />
+                                <span>
+                                  📲 WhatsApp: Recordar Pago Pendiente
+                                </span>
+                              </a>
+                              <button
+                                onClick={() =>
+                                  handlePayReservedTicket(
+                                    t.num,
+                                    "EFECTIVO_VENDEDOR"
+                                  )
+                                }
+                                className="flex-1 py-2 rounded-xl bg-emerald-700 text-white text-xs font-black"
+                              >
+                                💵 Ya me pagó Efectivo
+                              </button>
+                              <button
+                                onClick={() =>
+                                  handlePayReservedTicket(t.num, "YAPE_EVENTO")
+                                }
+                                className="flex-1 py-2 rounded-xl bg-purple-700 text-white text-xs font-black"
+                              >
+                                📱 Ya pagó Yape
+                              </button>
+                            </>
+                          )}
+                          <a
+                            href={buildWhatsAppTicketUrl(t, eventConfig)}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="w-full py-2 px-3 rounded-xl bg-stone-900 text-white text-xs font-black text-center"
+                          >
+                            🎟️ Enviar Ticket Oficial QR por WhatsApp
+                          </a>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* SUB-PESTAÑA MÓVIL 3: PADRÓN DE CONSULTA Y ENVÍO DE WHATSAPP */}
           {sellerMobileSubTab === "VER_PADRON" && (
             <div className="bg-white rounded-3xl shadow-md border border-stone-200 p-4 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2382,6 +2665,18 @@ export default function JcrEventosPolladaApp() {
                     {inspectedTicket.assignmentStatus !== "DISPONIBLE" &&
                       inspectedTicket.paymentStatus !== "PAGADO" && (
                         <>
+                          <a
+                            href={buildWhatsAppPaymentReminderUrl(
+                              inspectedTicket,
+                              eventConfig
+                            )}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="w-full py-2.5 rounded-xl bg-amber-600 text-white text-xs font-black text-center"
+                          >
+                            📲 WhatsApp: Recordar Pago Inconcluso (
+                            {formatPEN(inspectedTicket.agreedPriceCents)})
+                          </a>
                           <button
                             onClick={() =>
                               handlePayReservedTicket(
@@ -2409,19 +2704,10 @@ export default function JcrEventosPolladaApp() {
 
                     {inspectedTicket.assignmentStatus !== "DISPONIBLE" && (
                       <a
-                        href={`https://wa.me/${(
-                          inspectedTicket.buyerPhone || ""
-                        ).replace(/\D/g, "")}?text=${encodeURIComponent(
-                          `🍗 *JCR EVENTOS - ${eventConfig.name.toUpperCase()}*\n🎟️ Ticket Oficial N.º *${
-                            inspectedTicket.code
-                          }*\n👤 Cliente: ${
-                            inspectedTicket.buyerName
-                          }\n💳 Estado: *${
-                            inspectedTicket.paymentStatus
-                          }*\n🔐 Token QR Antifraude: ${
-                            inspectedTicket.qrToken
-                          }\n📍 Lugar: ${eventConfig.address}`
-                        )}`}
+                        href={buildWhatsAppTicketUrl(
+                          inspectedTicket,
+                          eventConfig
+                        )}
                         target="_blank"
                         rel="noreferrer"
                         className="w-full py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-black text-center"
@@ -2589,6 +2875,39 @@ export default function JcrEventosPolladaApp() {
                     >
                       ⚡ Buscar N.º Libre
                     </button>
+                  </div>
+
+                  {/* Selector Destacado de Vendedor Responsable en el POS Principal */}
+                  <div className="p-3.5 rounded-2xl bg-amber-50 border-2 border-amber-400 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex-1 min-w-[220px]">
+                      <label className="block text-xs font-black text-stone-900 mb-1">
+                        👤 ¿Quién está vendiendo este ticket? (Vendedor
+                        Responsable)
+                      </label>
+                      <select
+                        value={posSellerName}
+                        onChange={(e) => setPosSellerName(e.target.value)}
+                        className="w-full p-2.5 border-2 border-amber-500 rounded-xl text-sm font-black bg-white text-stone-900"
+                      >
+                        {sellers.map((s) => (
+                          <option key={s.id} value={s.name}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[10px] font-black uppercase text-amber-800 block">
+                        Ganancia por Pollada
+                      </span>
+                      <strong className="text-base font-black text-emerald-800">
+                        + {formatPEN(metrics.gananciaUnitariaPolladaCents)} c/u
+                      </strong>
+                      <span className="block text-[10px] text-stone-600">
+                        (Venta {formatPEN(eventConfig.unitPriceCents)} − Costo{" "}
+                        {formatPEN(eventConfig.unitCostCents)})
+                      </span>
+                    </div>
                   </div>
 
                   <div className="grid sm:grid-cols-12 gap-4">
@@ -2881,7 +3200,348 @@ export default function JcrEventosPolladaApp() {
             )}
 
             {/* ================================================================
-                PESTAÑA 2: PADRÓN DE 250 TICKETS + DETALLE QR Y ANULACIÓN
+                NUEVA PESTAÑA 2: DASHBOARD EN TIEMPO REAL DE GANANCIAS Y COBROS
+                (Polladas por Vendedor vs. Pozo Único de Barra + Recordatorios WhatsApp)
+            ================================================================= */}
+            {activeTab === "DASHBOARD" && (
+              <div className="space-y-6">
+                {/* 1. Tarjetas Superiores: separación clara entre Polladas y Barra */}
+                <div className="grid md:grid-cols-3 gap-4">
+                  {/* Card 1: Dinero Real en Caja + Yape */}
+                  <div className="bg-stone-900 text-white rounded-3xl p-5 shadow-md space-y-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 block">
+                      1. DINERO EN TIEMPO REAL (CAJA + YAPE)
+                    </span>
+                    <div className="text-3xl font-black text-white">
+                      {formatPEN(
+                        metrics.efectivoDisponibleCajaCents +
+                          metrics.saldoDisponibleYapeCents
+                      )}
+                    </div>
+                    <div className="text-xs text-stone-300 space-y-1 pt-2 border-t border-white/10">
+                      <div className="flex justify-between">
+                        <span>💵 Efectivo Físico en Gaveta:</span>
+                        <strong className="text-amber-300">
+                          {formatPEN(metrics.efectivoDisponibleCajaCents)}
+                        </strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>📱 Saldo Digital Yape / Plin:</span>
+                        <strong className="text-purple-300">
+                          {formatPEN(metrics.saldoDisponibleYapeCents)}
+                        </strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>👤 En mano de Vendedores (Por rendir):</span>
+                        <strong className="text-orange-300">
+                          {formatPEN(metrics.faltaRendirVendedoresCents)}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card 2: Ganancia Exclusiva de Polladas */}
+                  <div className="bg-emerald-900 text-white rounded-3xl p-5 shadow-md space-y-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300 block">
+                      2. GANANCIA EXCLUSIVA EN POLLADAS
+                    </span>
+                    <div className="text-3xl font-black text-emerald-200">
+                      {formatPEN(metrics.gananciaTotalPolladasPagadasCents)}
+                    </div>
+                    <div className="text-xs text-emerald-100 space-y-1 pt-2 border-t border-white/10">
+                      <div className="flex justify-between">
+                        <span>Polladas Pagadas ({metrics.pagados}):</span>
+                        <strong>{formatPEN(metrics.cobradoTicketsCents)}</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>
+                          Ganancia por plato (Venta{" "}
+                          {formatPEN(eventConfig.unitPriceCents)} − Costo{" "}
+                          {formatPEN(eventConfig.unitCostCents)}):
+                        </span>
+                        <strong className="text-amber-300">
+                          + {formatPEN(metrics.gananciaUnitariaPolladaCents)}
+                        </strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>
+                          Si cobran los {metrics.separados} separados:
+                        </span>
+                        <strong>
+                          {formatPEN(metrics.gananciaProyectadaPolladasCents)}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card 3: Pozo Único Aparte de Barra (Bebidas, Cervezas, Cigarros) */}
+                  <div className="bg-blue-950 text-white rounded-3xl p-5 shadow-md space-y-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-sky-300 block">
+                      3. POZO APARTE: BEBIDAS, CERVEZAS Y CIGARROS
+                    </span>
+                    <div className="text-3xl font-black text-sky-200">
+                      {formatPEN(metrics.ingresosBarraCents)}
+                    </div>
+                    <p className="text-[11px] text-sky-200/80">
+                      Este monto es una sola ganancia general de cantina (se
+                      divide aparte de los tickets de pollada).
+                    </p>
+                    <div className="text-xs text-sky-100 space-y-1 pt-1 border-t border-white/10">
+                      {barItems.map((b) => (
+                        <div key={b.id} className="flex justify-between">
+                          <span>
+                            {b.name} ({b.soldQty} vend.):
+                          </span>
+                          <strong>{formatPEN(b.totalRevenueCents)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Tabla en Vivo: Rendimiento, Tickets y Ganancia en Polladas por Cada Vendedor */}
+                <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-4">
+                    <div>
+                      <span className="text-[11px] font-black uppercase tracking-wider text-orange-600">
+                        Cálculo Automático en Tiempo Real
+                      </span>
+                      <h2 className="text-xl font-black text-stone-900">
+                        Ganancias en Polladas y Detalle de Tickets por Vendedor
+                      </h2>
+                      <p className="text-xs text-stone-600">
+                        Aquí ves exactamente cuántos tickets ha vendido cada
+                        vendedor, qué números de ticket entregó, a qué clientes,
+                        sus celulares y cuánto ha generado de ganancia.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid md:grid-cols-2 gap-4">
+                    {metrics.sellerBreakdown.map((item) => (
+                      <div
+                        key={item.seller.id}
+                        className="rounded-2xl border-2 border-stone-200 bg-stone-50/70 p-4 space-y-3 flex flex-col justify-between"
+                      >
+                        <div className="space-y-3">
+                          <div className="flex flex-wrap items-start justify-between gap-2 border-b border-stone-200 pb-3">
+                            <div>
+                              <h3 className="text-lg font-black text-stone-900">
+                                👤 {item.seller.name}
+                              </h3>
+                              <span className="text-xs text-stone-600 font-semibold">
+                                Total asignados:{" "}
+                                <strong>{item.totalTickets} tickets</strong> (
+                                <span className="text-emerald-700 font-black">
+                                  {item.paidCount} pagados
+                                </span>{" "}
+                                •{" "}
+                                <span className="text-amber-700 font-black">
+                                  {item.unpaidCount} falta pagar
+                                </span>
+                                )
+                              </span>
+                            </div>
+                            <div className="text-right bg-emerald-100 border border-emerald-300 px-3 py-1.5 rounded-xl">
+                              <span className="text-[10px] font-black uppercase text-emerald-800 block">
+                                Ganancia Polladas
+                              </span>
+                              <strong className="text-base font-black text-emerald-950">
+                                {formatPEN(item.gananciaPolladasVendedorCents)}
+                              </strong>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                            <div className="bg-white p-2 rounded-xl border">
+                              <span className="text-[10px] text-stone-500 block font-bold">
+                                Recaudado
+                              </span>
+                              <strong className="font-black text-stone-900">
+                                {formatPEN(item.recaudadoPolladasCents)}
+                              </strong>
+                            </div>
+                            <div className="bg-white p-2 rounded-xl border">
+                              <span className="text-[10px] text-amber-700 block font-bold">
+                                Falta Cobrar
+                              </span>
+                              <strong className="font-black text-amber-900">
+                                {formatPEN(item.porCobrarClientesCents)}
+                              </strong>
+                            </div>
+                            <div className="bg-white p-2 rounded-xl border">
+                              <span className="text-[10px] text-blue-700 block font-bold">
+                                Tiene en Mano
+                              </span>
+                              <strong className="font-black text-blue-900">
+                                {formatPEN(item.efectivoPorRendirCents)}
+                              </strong>
+                            </div>
+                          </div>
+
+                          {/* Lista exacta de tickets vendidos por este vendedor */}
+                          <div className="space-y-1.5">
+                            <span className="text-[11px] font-black text-stone-700 block">
+                              🎟️ Tickets vendidos por {item.seller.name}:
+                            </span>
+                            {item.ticketsList.length === 0 ? (
+                              <p className="text-xs text-stone-400 italic">
+                                Sin tickets vendidos todavía.
+                              </p>
+                            ) : (
+                              <div className="max-h-44 overflow-y-auto space-y-1.5 pr-1">
+                                {item.ticketsList.map((t) => {
+                                  const isPaid = t.paymentStatus === "PAGADO";
+                                  return (
+                                    <div
+                                      key={t.num}
+                                      className="p-2 rounded-xl bg-white border border-stone-200 flex flex-wrap items-center justify-between gap-2 text-xs"
+                                    >
+                                      <div>
+                                        <span className="font-mono font-black text-stone-900">
+                                          #{t.code}
+                                        </span>{" "}
+                                        —{" "}
+                                        <strong className="text-stone-800">
+                                          {t.buyerName}
+                                        </strong>{" "}
+                                        <span className="text-stone-500">
+                                          ({t.buyerPhone || "Sin cel."})
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-1.5">
+                                        <span
+                                          className={`px-2 py-0.5 rounded text-[10px] font-black ${
+                                            isPaid
+                                              ? "bg-emerald-100 text-emerald-900"
+                                              : "bg-amber-200 text-amber-950"
+                                          }`}
+                                        >
+                                          {t.paymentStatus}
+                                        </span>
+                                        {!isPaid && (
+                                          <a
+                                            href={buildWhatsAppPaymentReminderUrl(
+                                              t,
+                                              eventConfig
+                                            )}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            title="Mandar recordatorio amigable de pago por WhatsApp"
+                                            className="px-2 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-black flex items-center gap-1"
+                                          >
+                                            📲 Cobrar WA
+                                          </a>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 3. Centro de Recordatorios Amigables de WhatsApp para Pagos Inconclusos */}
+                <div className="bg-amber-50 rounded-3xl shadow-sm border-2 border-amber-400 p-5 sm:p-6 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-300 pb-3">
+                    <div>
+                      <span className="text-[11px] font-black uppercase tracking-wider text-amber-900">
+                        Cobranza Amigable por WhatsApp
+                      </span>
+                      <h3 className="text-lg font-black text-stone-900">
+                        Clientes con Pago Inconcluso / Ticket Separado (
+                        {metrics.separados})
+                      </h3>
+                      <p className="text-xs text-stone-700">
+                        Envía con un toque un mensaje amigable diciendo que el
+                        programa detectó su pago pendiente para que cancelen
+                        antes de recoger su pollada.
+                      </p>
+                    </div>
+                    <span className="px-3 py-1.5 rounded-xl bg-amber-200 text-amber-950 text-xs font-black">
+                      Total por cobrar:{" "}
+                      {formatPEN(metrics.faltaCobrarSeparadosCents)}
+                    </span>
+                  </div>
+
+                  {metrics.separados === 0 ? (
+                    <p className="text-xs font-bold text-emerald-800 py-4 text-center">
+                      🎉 ¡Excelente! Todos los tickets vendidos están 100%
+                      pagados. No hay pagos inconclusos.
+                    </p>
+                  ) : (
+                    <div className="grid md:grid-cols-2 gap-3">
+                      {tickets
+                        .filter(
+                          (t) =>
+                            t.assignmentStatus === "RESERVADO" &&
+                            t.paymentStatus !== "PAGADO"
+                        )
+                        .map((t) => (
+                          <div
+                            key={t.num}
+                            className="p-3.5 rounded-2xl bg-white border border-amber-300 flex flex-wrap items-center justify-between gap-3 shadow-sm"
+                          >
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-black text-sm text-orange-700">
+                                  Ticket #{t.code}
+                                </span>
+                                <span className="text-[10px] font-black bg-stone-100 px-2 py-0.5 rounded text-stone-700">
+                                  Vend: {t.sellerName}
+                                </span>
+                              </div>
+                              <p className="font-black text-sm text-stone-900 mt-0.5">
+                                {t.buyerName}
+                              </p>
+                              <p className="text-xs text-stone-500">
+                                WhatsApp:{" "}
+                                <strong>
+                                  {t.buyerPhone || "Sin número"}
+                                </strong>
+                              </p>
+                            </div>
+
+                            <div className="flex flex-wrap gap-1.5">
+                              <a
+                                href={buildWhatsAppPaymentReminderUrl(
+                                  t,
+                                  eventConfig
+                                )}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black flex items-center gap-1.5 shadow-sm"
+                              >
+                                <MessageCircle className="w-4 h-4" />
+                                <span>📲 Recordar Pago WA</span>
+                              </a>
+                              <button
+                                onClick={() =>
+                                  handlePayReservedTicket(
+                                    t.num,
+                                    "EFECTIVO_CAJA"
+                                  )
+                                }
+                                className="px-3 py-2 rounded-xl bg-emerald-700 text-white text-xs font-black"
+                              >
+                                💵 Pagó
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ================================================================
+                PESTAÑA 3: PADRÓN DE 250 TICKETS + DETALLE QR Y ANULACIÓN
             ================================================================= */}
             {activeTab === "PADRON" && (
               <div className="space-y-6">
@@ -3024,6 +3684,20 @@ export default function JcrEventosPolladaApp() {
                         {inspectedTicket.assignmentStatus !== "DISPONIBLE" &&
                           inspectedTicket.paymentStatus !== "PAGADO" && (
                             <>
+                              <a
+                                href={buildWhatsAppPaymentReminderUrl(
+                                  inspectedTicket,
+                                  eventConfig
+                                )}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="px-4 py-3 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black shadow flex items-center gap-1.5"
+                              >
+                                <MessageCircle className="w-4 h-4" />
+                                <span>
+                                  📲 WhatsApp: Recordar Pago Pendiente
+                                </span>
+                              </a>
                               <button
                                 onClick={() =>
                                   handlePayReservedTicket(
@@ -3066,19 +3740,10 @@ export default function JcrEventosPolladaApp() {
                         {inspectedTicket.assignmentStatus !== "DISPONIBLE" && (
                           <>
                             <a
-                              href={`https://wa.me/${(
-                                inspectedTicket.buyerPhone || ""
-                              ).replace(/\D/g, "")}?text=${encodeURIComponent(
-                                `🍗 *JCR EVENTOS - ${eventConfig.name.toUpperCase()}*\n🎟️ Ticket Oficial N.º *${
-                                  inspectedTicket.code
-                                }*\n👤 Cliente: ${
-                                  inspectedTicket.buyerName
-                                }\n💳 Estado: *${
-                                  inspectedTicket.paymentStatus
-                                }*\n🔐 Token QR Antifraude: ${
-                                  inspectedTicket.qrToken
-                                }\n📍 Dirección: ${eventConfig.address}`
-                              )}`}
+                              href={buildWhatsAppTicketUrl(
+                                inspectedTicket,
+                                eventConfig
+                              )}
                               target="_blank"
                               rel="noreferrer"
                               className="px-4 py-3 rounded-2xl bg-emerald-600 text-white text-xs font-black shadow"
@@ -3103,7 +3768,7 @@ export default function JcrEventosPolladaApp() {
             )}
 
             {/* ================================================================
-                PESTAÑA 3: COCINA Y DESPACHO DE PLATOS
+                PESTAÑA 4: COCINA Y DESPACHO DE PLATOS
             ================================================================= */}
             {activeTab === "DESPACHO" && (
               <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-5">
@@ -3186,14 +3851,30 @@ export default function JcrEventosPolladaApp() {
                         </div>
                         <div className="flex gap-2">
                           {!isPaid && (
-                            <button
-                              onClick={() =>
-                                handlePayReservedTicket(t.num, "EFECTIVO_CAJA")
-                              }
-                              className="px-3 py-2.5 rounded-xl bg-amber-600 text-white text-xs font-black"
-                            >
-                              Cobrar {formatPEN(t.agreedPriceCents)}
-                            </button>
+                            <>
+                              <a
+                                href={buildWhatsAppPaymentReminderUrl(
+                                  t,
+                                  eventConfig
+                                )}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="px-3 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-stone-950 text-xs font-black flex items-center gap-1"
+                              >
+                                📲 Cobrar WA
+                              </a>
+                              <button
+                                onClick={() =>
+                                  handlePayReservedTicket(
+                                    t.num,
+                                    "EFECTIVO_CAJA"
+                                  )
+                                }
+                                className="px-3 py-2.5 rounded-xl bg-emerald-700 text-white text-xs font-black"
+                              >
+                                Recibir {formatPEN(t.agreedPriceCents)}
+                              </button>
+                            </>
                           )}
                           <button
                             onClick={() => handleDeliverPlate(t.num)}
@@ -3216,7 +3897,7 @@ export default function JcrEventosPolladaApp() {
             )}
 
             {/* ================================================================
-                PESTAÑA 4: FIESTA, STOCK DE BARRA Y GASTOS
+                PESTAÑA 5: FIESTA, STOCK DE BARRA Y GASTOS
             ================================================================= */}
             {activeTab === "GASTOS" && (
               <div className="grid lg:grid-cols-12 gap-6">
@@ -3997,11 +4678,11 @@ export default function JcrEventosPolladaApp() {
           <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-stone-300 shadow-2xl z-40 grid grid-cols-6">
             {[
               { id: "VENDER", label: "Vender", icon: Ticket },
+              { id: "DASHBOARD", label: "Dashboard", icon: BarChart3 },
               { id: "PADRON", label: "250 Tkt", icon: QrCode },
               { id: "DESPACHO", label: "Cocina", icon: Utensils },
               { id: "VENDEDORES", label: "Vendedores", icon: Users },
               { id: "CAJA", label: "Caja", icon: Wallet },
-              { id: "ANTIFRAUDE", label: "Auditoría", icon: ShieldAlert },
             ].map((tab) => {
               const Icon = tab.icon;
               const isAct = activeTab === tab.id;
