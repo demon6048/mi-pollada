@@ -7,7 +7,6 @@ import {
   signInAnonymously,
   onAuthStateChanged,
   Auth,
-  User,
 } from "firebase/auth";
 import {
   getFirestore,
@@ -38,6 +37,10 @@ import {
   Flame,
   CheckCircle2,
   AlertTriangle,
+  Share2,
+  Trash2,
+  Monitor,
+  UserPlus,
 } from "lucide-react";
 
 /**
@@ -46,6 +49,7 @@ import {
  * ============================================================================
  */
 interface EventConfig {
+  promoter: string;
   prefix: string;
   name: string;
   address: string;
@@ -105,6 +109,7 @@ interface ExpenseRecord {
 interface SellerRecord {
   id: string;
   name: string;
+  phone?: string;
   cashInHandCents: number;
   settledCents: number;
 }
@@ -161,7 +166,7 @@ try {
 
 /**
  * ============================================================================
- * 3. FUNCIONES PURAS Y DETERMINISTAS (SIN Math.random EN PRERENDER DE VERCEL)
+ * 3. FUNCIONES PURAS Y DETERMINISTAS (CERO ERRORES EN VERCEL BUILD)
  * ============================================================================
  */
 const formatPEN = (cents: number = 0): string => {
@@ -180,7 +185,6 @@ const getPeruTimeStr = (): string => {
   });
 };
 
-// Token determinista puro para que Next.js 16 compile las páginas estáticas sin errores
 const generateDeterministicToken = (prefix: string, num: number): string => {
   const code = String(num).padStart(3, "0");
   const hash = ((num * 7919 + 104729) % 999999)
@@ -191,7 +195,7 @@ const generateDeterministicToken = (prefix: string, num: number): string => {
 };
 
 const createInitial250Tickets = (
-  prefix: string = "HCO1",
+  prefix: string = "JCR1",
   priceCents: number = 1500,
   costCents: number = 900
 ): TicketItem[] => {
@@ -257,22 +261,31 @@ const createInitialBarItems = (): BarItem[] => [
 ];
 
 const createInitialSellers = (): SellerRecord[] => [
-  { id: "SEL-1", name: "Caja Principal", cashInHandCents: 0, settledCents: 0 },
+  {
+    id: "SEL-1",
+    name: "Caja Principal",
+    phone: "",
+    cashInHandCents: 0,
+    settledCents: 0,
+  },
   {
     id: "SEL-2",
-    name: "Vendedor 1 (Móvil)",
+    name: "Vendedor 1",
+    phone: "",
     cashInHandCents: 0,
     settledCents: 0,
   },
   {
     id: "SEL-3",
-    name: "Vendedor 2 (Móvil)",
+    name: "Vendedor 2",
+    phone: "",
     cashInHandCents: 0,
     settledCents: 0,
   },
   {
     id: "SEL-4",
-    name: "Vendedor 3 (Móvil)",
+    name: "Vendedor 3",
+    phone: "",
     cashInHandCents: 0,
     settledCents: 0,
   },
@@ -284,36 +297,48 @@ const createInitialAuditLogs = (): AuditLogItem[] => [
     time: "Activo",
     category: "SISTEMA",
     severity: "INFO",
-    operator: "Sistema Central",
-    device: "SERVER-HCO",
-    title: "Sistema POS & Control Antifraude Inicializado",
+    operator: "JCR EVENTOS",
+    device: "LAPTOP-CENTRAL",
+    title: "Sistema JCR EVENTOS Inicializado",
     detail:
-      "Padrón oficial de 250 tickets y bitácora antifraude listos en Huánuco, Perú.",
+      "Base de datos en tiempo real y modo exclusivo para celulares de vendedores listos.",
   },
 ];
 
 /**
  * ============================================================================
- * 4. COMPONENTE PRINCIPAL DE LA APLICACIÓN
+ * 4. COMPONENTE PRINCIPAL — JCR EVENTOS (MODO LAPTOP ADMIN + MODO CELULAR VENDEDOR)
  * ============================================================================
  */
-export default function MiPolladaHuanucoApp() {
-  // Identificación de usuario, teléfono y sincronización
-  const [user, setUser] = useState<User | null>(null);
+export default function JcrEventosPolladaApp() {
+  // Estado de conexión directa a Firebase (No se bloquea aunque Auth Anónimo esté apagado)
+  const [dbReady, setDbReady] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<string>("CONECTANDO");
-  const [deviceTag, setDeviceTag] = useState<string>("TEL-HCO");
+  const [deviceTag, setDeviceTag] = useState<string>("CEL-JCR");
   const [activeOperator, setActiveOperator] =
     useState<string>("Caja Principal");
 
-  // Clave Maestra (Candado de seguridad para separar Vendedores de Administrador)
+  // MODO DE VISTA:
+  // "SOLO_VENDEDOR" -> Vista bloqueada para celulares (solo vende tickets y consulta padrón, no toca nada más)
+  // "PANEL_COMPLETO" -> Vista completa para tu Laptop (Caja, Gastos, Vendedores, Antifraude, Config)
+  const [viewMode, setViewMode] = useState<string>("PANEL_COMPLETO");
+  const [lockedSellerByLink, setLockedSellerByLink] = useState<boolean>(false);
+  const [sellerMobileSubTab, setSellerMobileSubTab] =
+    useState<string>("VENDER_TICKET");
+
+  // Clave Maestra (Candado para proteger tu Panel Completo y acciones críticas)
   const [isMasterUnlocked, setIsMasterUnlocked] = useState<boolean>(false);
   const [masterPin, setMasterPin] = useState<string>("2026");
   const [showMasterModal, setShowMasterModal] = useState<boolean>(false);
   const [masterPinInput, setMasterPinInput] = useState<string>("");
+  const [pendingMasterAction, setPendingMasterAction] = useState<string>("");
 
   // Eventos / Actividades
   const [eventsList, setEventsList] = useState<EventSummaryItem[]>([
-    { id: "evento-huanuco-principal", name: "Gran Pollada Huánuco #1" },
+    {
+      id: "evento-huanuco-principal",
+      name: "JCR EVENTOS - Gran Pollada #1",
+    },
   ]);
   const [currentEventId, setCurrentEventId] = useState<string>(
     "evento-huanuco-principal"
@@ -321,7 +346,7 @@ export default function MiPolladaHuanucoApp() {
   const [showNewEventModal, setShowNewEventModal] = useState<boolean>(false);
   const [newEventTitleInput, setNewEventTitleInput] = useState<string>("");
 
-  // Navegación amplia (Usamos string para compatibilidad total con TypeScript en Vercel)
+  // Pestaña activa en el Panel de Control Completo (Laptop)
   const [activeTab, setActiveTab] = useState<string>("VENDER");
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [showExportModal, setShowExportModal] = useState<boolean>(false);
@@ -331,18 +356,19 @@ export default function MiPolladaHuanucoApp() {
     setToast({ msg, type });
   };
 
-  // Datos maestros del negocio
+  // Datos Maestros sincronizados con Firebase
   const [eventConfig, setEventConfig] = useState<EventConfig>({
-    prefix: "HCO1",
-    name: "Pollería & Eventos Huánuco",
-    address: "Jr. General Prado - Huánuco",
+    promoter: "JCR EVENTOS",
+    prefix: "JCR1",
+    name: "Gran Pollada Bailable — JCR EVENTOS",
+    address: "Huánuco, Perú",
     capacity: 250,
     unitCostCents: 900,
     unitPriceCents: 1500,
   });
 
   const [tickets, setTickets] = useState<TicketItem[]>(() =>
-    createInitial250Tickets("HCO1", 1500, 900)
+    createInitial250Tickets("JCR1", 1500, 900)
   );
   const [barItems, setBarItems] = useState<BarItem[]>(() =>
     createInitialBarItems()
@@ -362,7 +388,7 @@ export default function MiPolladaHuanucoApp() {
   const [conteoFisicoRealCents, setConteoFisicoRealCents] =
     useState<number>(10000);
 
-  // Estados del Formulario POS (Pestaña 1)
+  // Estados del Formulario POS de Tickets
   const [posTicketNums, setPosTicketNums] = useState<string>("1");
   const [posBuyerName, setPosBuyerName] = useState<string>("");
   const [posBuyerPhone, setPosBuyerPhone] = useState<string>("");
@@ -373,17 +399,17 @@ export default function MiPolladaHuanucoApp() {
   const [posYapeRef, setPosYapeRef] = useState<string>("");
   const [posDeliverNow, setPosDeliverNow] = useState<boolean>(false);
 
-  // Estados del Padrón 250 Tickets (Pestaña 2)
+  // Estados del Padrón 250 Tickets
   const [padronFilter, setPadronFilter] = useState<string>("TODOS");
   const [padronSearch, setPadronSearch] = useState<string>("");
   const [inspectedTicketNum, setInspectedTicketNum] = useState<number | null>(
     null
   );
 
-  // Estados de Cocina y Despacho (Pestaña 3)
+  // Estados de Cocina y Despacho
   const [despachoSearch, setDespachoSearch] = useState<string>("");
 
-  // Estados de Fiesta, Stock y Gastos (Pestaña 4)
+  // Estados de Fiesta, Stock y Gastos
   const [expCategory, setExpCategory] = useState<string>("COMPRA_BARRA");
   const [expConcept, setExpConcept] = useState<string>("");
   const [expAmountSoles, setExpAmountSoles] = useState<string>("");
@@ -394,40 +420,80 @@ export default function MiPolladaHuanucoApp() {
   const [newBarName, setNewBarName] = useState<string>("");
   const [newBarPriceSoles, setNewBarPriceSoles] = useState<string>("");
 
-  // Estados de Vendedores (Pestaña 5)
+  // Estados de Vendedores (Agregar Vendedor en Firebase)
   const [newSellerInput, setNewSellerInput] = useState<string>("");
+  const [newSellerPhoneInput, setNewSellerPhoneInput] = useState<string>("");
 
-  // Estados de Historial Antifraude (Pestaña 7)
+  // Estados de Historial Antifraude
   const [auditSearch, setAuditSearch] = useState<string>("");
   const [auditFilter, setAuditFilter] = useState<string>("TODOS");
 
-  // Estados de Configuración (Pestaña 8)
+  // Estados de Configuración
   const [newMasterPinInput, setNewMasterPinInput] = useState<string>("");
 
-  // Inicializar identificador de celular solo en el cliente (evita errores de hidratación en Vercel)
+  // Detectar si abrieron un Link Exclusivo de Vendedor (?modo=vendedor&vendedor=Nombre)
   useEffect(() => {
-    const savedTag = "TEL-" + String(Date.now()).slice(-4);
-    setDeviceTag(savedTag);
+    const tag = "CEL-" + String(Date.now()).slice(-4);
+    setDeviceTag(tag);
+
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const modoParam = params.get("modo");
+      const vendedorParam = params.get("vendedor");
+      const eventoParam = params.get("evento");
+
+      if (eventoParam) {
+        setCurrentEventId(eventoParam);
+      }
+
+      if (modoParam === "vendedor") {
+        setViewMode("SOLO_VENDEDOR");
+        setIsMasterUnlocked(false);
+        if (vendedorParam) {
+          setActiveOperator(vendedorParam);
+          setPosSellerName(vendedorParam);
+          setLockedSellerByLink(true);
+          setPosPayMode("EFECTIVO_VENDEDOR");
+        }
+      }
+    }
   }, []);
 
-  // Autenticación anónima en Firebase
+  // Inicializar Firebase sin bloquear si Anonymous Auth no está habilitado en consola
   useEffect(() => {
-    if (!firebaseAuth) {
-      setSyncStatus("LOCAL");
+    if (!firestoreDb) {
+      setSyncStatus("ERROR_DB");
       return;
     }
-    signInAnonymously(firebaseAuth).catch(() => {
-      setSyncStatus("LOCAL");
+
+    if (!firebaseAuth) {
+      setDbReady(true);
+      return;
+    }
+
+    signInAnonymously(firebaseAuth)
+      .then(() => {
+        setDbReady(true);
+      })
+      .catch((err) => {
+        console.warn(
+          "Aviso Auth Anónimo (operando directo con Firestore):",
+          err
+        );
+        // Igual activamos dbReady para que Firestore lea y guarde sin bloquearse
+        setDbReady(true);
+      });
+
+    const unsubscribe = onAuthStateChanged(firebaseAuth, () => {
+      setDbReady(true);
     });
-    const unsubscribe = onAuthStateChanged(firebaseAuth, (u) => {
-      setUser(u);
-    });
+
     return () => unsubscribe();
   }, []);
 
-  // Sincronización en tiempo real con Firestore
+  // Escuchar cambios en tiempo real desde Firebase (Multi-celular + Laptop)
   useEffect(() => {
-    if (!user || !firestoreDb) return;
+    if (!dbReady || !firestoreDb) return;
 
     const eventsColRef = collection(
       firestoreDb,
@@ -453,7 +519,7 @@ export default function MiPolladaHuanucoApp() {
           setEventsList(list);
         }
       },
-      (err) => console.error("Aviso leyendo lista de eventos:", err)
+      (err) => console.warn("Aviso leyendo lista de eventos:", err)
     );
 
     const eventDocRef = doc(
@@ -472,14 +538,58 @@ export default function MiPolladaHuanucoApp() {
         setSyncStatus("EN_VIVO");
         if (docSnap.exists()) {
           const data = docSnap.data();
-          if (data.eventConfig) setEventConfig(data.eventConfig);
+          if (data.eventConfig) {
+            setEventConfig({
+              promoter: data.eventConfig.promoter || "JCR EVENTOS",
+              ...data.eventConfig,
+            });
+          }
           if (data.masterPin) setMasterPin(data.masterPin);
-          if (data.tickets) setTickets(JSON.parse(data.tickets));
-          if (data.barItems) setBarItems(JSON.parse(data.barItems));
-          if (data.payments) setPayments(JSON.parse(data.payments));
-          if (data.expenses) setExpenses(JSON.parse(data.expenses));
-          if (data.sellers) setSellers(JSON.parse(data.sellers));
-          if (data.auditLogs) setAuditLogs(JSON.parse(data.auditLogs));
+          if (data.tickets) {
+            try {
+              setTickets(JSON.parse(data.tickets));
+            } catch (e) {
+              console.error(e);
+            }
+          }
+          if (data.barItems) {
+            try {
+              setBarItems(JSON.parse(data.barItems));
+            } catch (e) {
+              console.error(e);
+            }
+          }
+          if (data.payments) {
+            try {
+              setPayments(JSON.parse(data.payments));
+            } catch (e) {
+              console.error(e);
+            }
+          }
+          if (data.expenses) {
+            try {
+              setExpenses(JSON.parse(data.expenses));
+            } catch (e) {
+              console.error(e);
+            }
+          }
+          if (data.sellers) {
+            try {
+              const parsedSellers: SellerRecord[] = JSON.parse(data.sellers);
+              if (Array.isArray(parsedSellers) && parsedSellers.length > 0) {
+                setSellers(parsedSellers);
+              }
+            } catch (e) {
+              console.error(e);
+            }
+          }
+          if (data.auditLogs) {
+            try {
+              setAuditLogs(JSON.parse(data.auditLogs));
+            } catch (e) {
+              console.error(e);
+            }
+          }
           if (typeof data.pollosRecibidos === "number")
             setPollosRecibidos(data.pollosRecibidos);
           if (typeof data.fondoInicialCajaCents === "number")
@@ -487,30 +597,34 @@ export default function MiPolladaHuanucoApp() {
           if (typeof data.conteoFisicoRealCents === "number")
             setConteoFisicoRealCents(data.conteoFisicoRealCents);
         } else {
-          // Crear documento inicial en la nube
-          const initT = createInitial250Tickets("HCO1", 1500, 900);
+          // Crear documento inicial en Firebase si aún no existe
+          const initT = createInitial250Tickets("JCR1", 1500, 900);
           const initB = createInitialBarItems();
           const initS = createInitialSellers();
           const initA = createInitialAuditLogs();
-          setDoc(eventDocRef, {
-            eventConfig,
-            masterPin,
-            tickets: JSON.stringify(initT),
-            barItems: JSON.stringify(initB),
-            payments: JSON.stringify([]),
-            expenses: JSON.stringify([]),
-            sellers: JSON.stringify(initS),
-            auditLogs: JSON.stringify(initA),
-            pollosRecibidos: 250,
-            fondoInicialCajaCents: 10000,
-            conteoFisicoRealCents: 10000,
-            updatedAt: Date.now(),
-          }).catch((e) => console.error("Error creando doc inicial:", e));
+          setDoc(
+            eventDocRef,
+            {
+              eventConfig,
+              masterPin,
+              tickets: JSON.stringify(initT),
+              barItems: JSON.stringify(initB),
+              payments: JSON.stringify([]),
+              expenses: JSON.stringify([]),
+              sellers: JSON.stringify(initS),
+              auditLogs: JSON.stringify(initA),
+              pollosRecibidos: 250,
+              fondoInicialCajaCents: 10000,
+              conteoFisicoRealCents: 10000,
+              updatedAt: Date.now(),
+            },
+            { merge: true }
+          ).catch((e) => console.error("Error creando doc inicial:", e));
         }
       },
       (err) => {
-        console.error("Error snapshot:", err);
-        setSyncStatus("LOCAL");
+        console.error("Error snapshot Firebase:", err);
+        setSyncStatus("ERROR_REGLAS");
       }
     );
 
@@ -518,9 +632,9 @@ export default function MiPolladaHuanucoApp() {
       unsubList();
       unsubDoc();
     };
-  }, [user, currentEventId]);
+  }, [dbReady, currentEventId]);
 
-  // Guardar estado en Firebase
+  // Guardar inmediatamente en Firebase con merge: true (Evita que un celular borre lo de otro)
   const saveToCloud = async (overrides: {
     eventConfig?: EventConfig;
     masterPin?: string;
@@ -534,8 +648,9 @@ export default function MiPolladaHuanucoApp() {
     fondoInicialCajaCents?: number;
     conteoFisicoRealCents?: number;
   }) => {
-    if (!user || !firestoreDb) return;
+    if (!firestoreDb) return;
     try {
+      setSyncStatus("GUARDANDO");
       const eventDocRef = doc(
         firestoreDb,
         "artifacts",
@@ -545,24 +660,36 @@ export default function MiPolladaHuanucoApp() {
         "pollada_events",
         currentEventId
       );
-      await setDoc(eventDocRef, {
-        eventConfig: overrides.eventConfig ?? eventConfig,
-        masterPin: overrides.masterPin ?? masterPin,
-        tickets: JSON.stringify(overrides.tickets ?? tickets),
-        barItems: JSON.stringify(overrides.barItems ?? barItems),
-        payments: JSON.stringify(overrides.payments ?? payments),
-        expenses: JSON.stringify(overrides.expenses ?? expenses),
-        sellers: JSON.stringify(overrides.sellers ?? sellers),
-        auditLogs: JSON.stringify((overrides.auditLogs ?? auditLogs).slice(0, 250)),
-        pollosRecibidos: overrides.pollosRecibidos ?? pollosRecibidos,
-        fondoInicialCajaCents:
-          overrides.fondoInicialCajaCents ?? fondoInicialCajaCents,
-        conteoFisicoRealCents:
-          overrides.conteoFisicoRealCents ?? conteoFisicoRealCents,
-        updatedAt: Date.now(),
-      });
+      await setDoc(
+        eventDocRef,
+        {
+          eventConfig: overrides.eventConfig ?? eventConfig,
+          masterPin: overrides.masterPin ?? masterPin,
+          tickets: JSON.stringify(overrides.tickets ?? tickets),
+          barItems: JSON.stringify(overrides.barItems ?? barItems),
+          payments: JSON.stringify(overrides.payments ?? payments),
+          expenses: JSON.stringify(overrides.expenses ?? expenses),
+          sellers: JSON.stringify(overrides.sellers ?? sellers),
+          auditLogs: JSON.stringify(
+            (overrides.auditLogs ?? auditLogs).slice(0, 250)
+          ),
+          pollosRecibidos: overrides.pollosRecibidos ?? pollosRecibidos,
+          fondoInicialCajaCents:
+            overrides.fondoInicialCajaCents ?? fondoInicialCajaCents,
+          conteoFisicoRealCents:
+            overrides.conteoFisicoRealCents ?? conteoFisicoRealCents,
+          updatedAt: Date.now(),
+        },
+        { merge: true }
+      );
+      setSyncStatus("EN_VIVO");
     } catch (e) {
-      console.error("Error guardando en nube:", e);
+      console.error("Error guardando en Firebase:", e);
+      setSyncStatus("ERROR_GUARDADO");
+      notify(
+        "Atención: Revisa que las Reglas de Firestore estén en modo público (allow read, write: if true;).",
+        "error"
+      );
     }
   };
 
@@ -592,6 +719,7 @@ export default function MiPolladaHuanucoApp() {
       `Acción protegida (${actionName}). Ingresa primero la Clave Maestra 🔒.`,
       "warning"
     );
+    setPendingMasterAction(actionName);
     setMasterPinInput("");
     setShowMasterModal(true);
     return false;
@@ -601,6 +729,11 @@ export default function MiPolladaHuanucoApp() {
     if (masterPinInput.trim() === masterPin) {
       setIsMasterUnlocked(true);
       setShowMasterModal(false);
+      if (pendingMasterAction === "ABRIR_PANEL_COMPLETO") {
+        setViewMode("PANEL_COMPLETO");
+        setLockedSellerByLink(false);
+      }
+      setPendingMasterAction("");
       const nextLogs = [
         makeAuditEntry(
           "ALERTA",
@@ -612,14 +745,17 @@ export default function MiPolladaHuanucoApp() {
       ];
       setAuditLogs(nextLogs);
       saveToCloud({ auditLogs: nextLogs });
-      notify("¡Clave Maestra verificada! Modo Administrador activo.", "success");
+      notify(
+        "¡Clave Maestra verificada! Panel de Control Maestro desbloqueado.",
+        "success"
+      );
     } else {
       const nextLogs = [
         makeAuditEntry(
           "ALERTA",
           "CRITICAL",
           "🚨 Intento Fallido de Clave Maestra",
-          `PIN incorrecto ingresado desde el celular de ${activeOperator}.`
+          `PIN incorrecto ingresado desde el dispositivo de ${activeOperator}.`
         ),
         ...auditLogs,
       ];
@@ -698,6 +834,22 @@ export default function MiPolladaHuanucoApp() {
     const gananciaNetaCents =
       cobradoTicketsCents + ingresosBarraCents - gastosTotalesCents;
 
+    // Estadísticas exclusivas del vendedor activo en este celular
+    const misTicketsVendidos = tickets.filter(
+      (t) =>
+        t.sellerName === activeOperator && t.assignmentStatus !== "DISPONIBLE"
+    );
+    const misTicketsPagados = misTicketsVendidos.filter(
+      (t) => t.paymentStatus === "PAGADO"
+    ).length;
+    const misTicketsSeparados = misTicketsVendidos.filter(
+      (t) => t.paymentStatus !== "PAGADO"
+    ).length;
+    const miSellerRecord = sellers.find((s) => s.name === activeOperator);
+    const miEfectivoPorRendirCents = miSellerRecord
+      ? Math.max(0, miSellerRecord.cashInHandCents - miSellerRecord.settledCents)
+      : 0;
+
     return {
       disponibles,
       separados,
@@ -715,6 +867,10 @@ export default function MiPolladaHuanucoApp() {
       faltaRendirVendedoresCents,
       platosQuedan,
       gananciaNetaCents,
+      misTicketsTotal: misTicketsVendidos.length,
+      misTicketsPagados,
+      misTicketsSeparados,
+      miEfectivoPorRendirCents,
     };
   }, [
     tickets,
@@ -726,9 +882,9 @@ export default function MiPolladaHuanucoApp() {
     fondoInicialCajaCents,
     conteoFisicoRealCents,
     eventConfig,
+    activeOperator,
   ]);
 
-  // Cálculo instantáneo para el POS
   const parsedPosNums = useMemo(() => {
     return Array.from(
       new Set(
@@ -749,10 +905,10 @@ export default function MiPolladaHuanucoApp() {
 
   /**
    * ==========================================================================
-   * 6. OPERACIONES DE NEGOCIO Y AUDITORÍA ANTIFRAUDE
+   * 6. OPERACIONES DE NEGOCIO Y SINCRONIZACIÓN CON FIREBASE
    * ==========================================================================
    */
-  const handleSellOrReserveTickets = () => {
+  const handleSellOrReserveTickets = async () => {
     if (parsedPosNums.length === 0) {
       notify("Ingresa un número de ticket válido del 1 al 250.", "error");
       return;
@@ -764,7 +920,7 @@ export default function MiPolladaHuanucoApp() {
     );
     if (occupied.length > 0) {
       notify(
-        `El ticket #${occupied[0].code} ya está ocupado por ${occupied[0].buyerName}.`,
+        `El ticket #${occupied[0].code} ya fue vendido o separado para ${occupied[0].buyerName}. Elige otro número.`,
         "error"
       );
       return;
@@ -772,7 +928,11 @@ export default function MiPolladaHuanucoApp() {
 
     const buyer = posBuyerName.trim() || "Cliente Directo";
     const phone = posBuyerPhone.trim();
-    const seller = posSellerName || activeOperator;
+    // Si está en Modo Exclusivo Vendedor, forzamos que el vendedor sea el operador activo
+    const seller =
+      viewMode === "SOLO_VENDEDOR"
+        ? activeOperator
+        : posSellerName || activeOperator;
     const isSeparar = posPayMode === "SOLO_SEPARAR";
     const totalCents = parsedPosNums.length * eventConfig.unitPriceCents;
     const timeStr = getPeruTimeStr();
@@ -790,9 +950,18 @@ export default function MiPolladaHuanucoApp() {
         paidCents: isSeparar ? 0 : t.agreedPriceCents,
         paymentMethod: isSeparar ? "" : posPayMode,
         paymentRef: posYapeRef.trim(),
-        deliveryStatus: !isSeparar && posDeliverNow ? "ENTREGADO" : "PENDIENTE",
-        deliveredAt: !isSeparar && posDeliverNow ? timeStr : null,
-        deliveredBy: !isSeparar && posDeliverNow ? activeOperator : null,
+        deliveryStatus:
+          !isSeparar && posDeliverNow && viewMode === "PANEL_COMPLETO"
+            ? "ENTREGADO"
+            : "PENDIENTE",
+        deliveredAt:
+          !isSeparar && posDeliverNow && viewMode === "PANEL_COMPLETO"
+            ? timeStr
+            : null,
+        deliveredBy:
+          !isSeparar && posDeliverNow && viewMode === "PANEL_COMPLETO"
+            ? activeOperator
+            : null,
       };
     });
 
@@ -809,7 +978,7 @@ export default function MiPolladaHuanucoApp() {
         {
           id: `PAY-${Date.now()}`,
           time: timeStr,
-          description: `Ticket(s) #${codesText} (${buyer})`,
+          description: `Ticket(s) #${codesText} (${buyer}) - Vend: ${seller}`,
           amountCents: totalCents,
           destination: posPayMode,
         },
@@ -819,11 +988,25 @@ export default function MiPolladaHuanucoApp() {
       if (posPayMode === "EFECTIVO_CAJA") {
         nextConteo += totalCents;
       } else if (posPayMode === "EFECTIVO_VENDEDOR") {
-        nextSellers = sellers.map((s) =>
-          s.name === seller
-            ? { ...s, cashInHandCents: s.cashInHandCents + totalCents }
-            : s
-        );
+        const sellerExists = sellers.some((s) => s.name === seller);
+        if (sellerExists) {
+          nextSellers = sellers.map((s) =>
+            s.name === seller
+              ? { ...s, cashInHandCents: s.cashInHandCents + totalCents }
+              : s
+          );
+        } else {
+          nextSellers = [
+            ...sellers,
+            {
+              id: `SEL-${Date.now()}`,
+              name: seller,
+              phone: "",
+              cashInHandCents: totalCents,
+              settledCents: 0,
+            },
+          ];
+        }
       }
     }
 
@@ -847,7 +1030,7 @@ export default function MiPolladaHuanucoApp() {
     setConteoFisicoRealCents(nextConteo);
     setAuditLogs(nextLogs);
 
-    saveToCloud({
+    await saveToCloud({
       tickets: nextTickets,
       payments: nextPayments,
       sellers: nextSellers,
@@ -866,13 +1049,109 @@ export default function MiPolladaHuanucoApp() {
 
     notify(
       isSeparar
-        ? `Ticket(s) #${codesText} separado(s) para ${buyer}.`
-        : `¡Venta exitosa! Ticket(s) #${codesText} por ${formatPEN(totalCents)}.`,
+        ? `Ticket(s) #${codesText} separado(s) para ${buyer}. Guardado en Firebase.`
+        : `¡Venta exitosa! Ticket(s) #${codesText} por ${formatPEN(
+            totalCents
+          )} sincronizado en vivo.`,
       "success"
     );
   };
 
-  const handlePayReservedTicket = (
+  // AGREGAR VENDEDOR Y GUARDAR EN FIREBASE AL INSTANTE
+  const handleAddSeller = async () => {
+    const cleanName = newSellerInput.trim();
+    const cleanPhone = newSellerPhoneInput.trim();
+    if (!cleanName) {
+      notify("Escribe el nombre del vendedor antes de agregarlo.", "warning");
+      return;
+    }
+    if (sellers.some((s) => s.name.toLowerCase() === cleanName.toLowerCase())) {
+      notify(`El vendedor «${cleanName}» ya está registrado.`, "warning");
+      return;
+    }
+
+    const newSellerObj: SellerRecord = {
+      id: `SEL-${Date.now()}`,
+      name: cleanName,
+      phone: cleanPhone,
+      cashInHandCents: 0,
+      settledCents: 0,
+    };
+
+    const nextSellers: SellerRecord[] = [...sellers, newSellerObj];
+
+    const nextLogs = [
+      makeAuditEntry(
+        "SISTEMA",
+        "INFO",
+        `Nuevo Vendedor Agregado en Base de Datos: ${cleanName}`,
+        `Habilitado por ${activeOperator} para vender desde su celular.`
+      ),
+      ...auditLogs,
+    ];
+
+    // Actualizamos estado local y guardamos inmediatamente en Firebase
+    setSellers(nextSellers);
+    setAuditLogs(nextLogs);
+    setNewSellerInput("");
+    setNewSellerPhoneInput("");
+
+    await saveToCloud({ sellers: nextSellers, auditLogs: nextLogs });
+    notify(
+      `¡Vendedor «${cleanName}» guardado en Firebase! Ya aparece en todos los celulares.`,
+      "success"
+    );
+  };
+
+  // Eliminar vendedor (Protegido con Clave Maestra)
+  const handleDeleteSeller = async (sellerId: string) => {
+    if (!requireMasterAuth("Eliminar Vendedor")) return;
+    const target = sellers.find((s) => s.id === sellerId);
+    if (!target) return;
+    if (sellers.length <= 1) {
+      notify("Debe quedar al menos un operador principal.", "warning");
+      return;
+    }
+    const pending = Math.max(0, target.cashInHandCents - target.settledCents);
+    if (pending > 0) {
+      notify(
+        `No puedes eliminar a ${target.name} porque aún tiene ${formatPEN(
+          pending
+        )} por rendir a Caja.`,
+        "error"
+      );
+      return;
+    }
+
+    const nextSellers = sellers.filter((s) => s.id !== sellerId);
+    const nextLogs = [
+      makeAuditEntry(
+        "ALERTA",
+        "WARNING",
+        `Vendedor Eliminado: ${target.name}`,
+        `Eliminado de la base de datos por ${activeOperator}.`
+      ),
+      ...auditLogs,
+    ];
+
+    setSellers(nextSellers);
+    setAuditLogs(nextLogs);
+    await saveToCloud({ sellers: nextSellers, auditLogs: nextLogs });
+    notify(`Vendedor «${target.name}» eliminado de Firebase.`, "info");
+  };
+
+  // Generar enlace exclusivo de venta para el celular de un vendedor
+  const getSellerExclusiveUrl = (sellerName: string): string => {
+    const baseUrl =
+      typeof window !== "undefined"
+        ? window.location.origin + window.location.pathname
+        : "https://mi-pollada.vercel.app";
+    return `${baseUrl}?modo=vendedor&vendedor=${encodeURIComponent(
+      sellerName
+    )}&evento=${encodeURIComponent(currentEventId)}`;
+  };
+
+  const handlePayReservedTicket = async (
     ticketNum: number,
     method: string = "EFECTIVO_CAJA"
   ) => {
@@ -882,6 +1161,12 @@ export default function MiPolladaHuanucoApp() {
     const monto = target.agreedPriceCents;
     const timeStr = getPeruTimeStr();
 
+    // Si lo cobra un vendedor en Modo Vendedor y elige Efectivo, suma a la bolsa del vendedor
+    const actualDestination =
+      viewMode === "SOLO_VENDEDOR" && method === "EFECTIVO_CAJA"
+        ? "EFECTIVO_VENDEDOR"
+        : method;
+
     const nextTickets = tickets.map((t) =>
       t.num === ticketNum
         ? {
@@ -889,7 +1174,7 @@ export default function MiPolladaHuanucoApp() {
             assignmentStatus: "CONFIRMADO",
             paymentStatus: "PAGADO",
             paidCents: monto,
-            paymentMethod: method,
+            paymentMethod: actualDestination,
           }
         : t
     );
@@ -900,13 +1185,22 @@ export default function MiPolladaHuanucoApp() {
         time: timeStr,
         description: `Cobro Ticket #${target.code} (${target.buyerName})`,
         amountCents: monto,
-        destination: method,
+        destination: actualDestination,
       },
       ...payments,
     ];
 
+    let nextSellers = [...sellers];
+    if (actualDestination === "EFECTIVO_VENDEDOR") {
+      nextSellers = sellers.map((s) =>
+        s.name === activeOperator
+          ? { ...s, cashInHandCents: s.cashInHandCents + monto }
+          : s
+      );
+    }
+
     const nextConteo =
-      method === "EFECTIVO_CAJA"
+      actualDestination === "EFECTIVO_CAJA"
         ? conteoFisicoRealCents + monto
         : conteoFisicoRealCents;
 
@@ -915,19 +1209,23 @@ export default function MiPolladaHuanucoApp() {
         "VENTA",
         "INFO",
         `Cobro de Ticket Separado #${target.code}`,
-        `Cliente ${target.buyerName} canceló ${formatPEN(monto)} vía ${method}.`
+        `Cliente ${target.buyerName} canceló ${formatPEN(
+          monto
+        )} vía ${actualDestination} (Operador: ${activeOperator}).`
       ),
       ...auditLogs,
     ];
 
     setTickets(nextTickets);
     setPayments(nextPayments);
+    setSellers(nextSellers);
     setConteoFisicoRealCents(nextConteo);
     setAuditLogs(nextLogs);
 
-    saveToCloud({
+    await saveToCloud({
       tickets: nextTickets,
       payments: nextPayments,
+      sellers: nextSellers,
       conteoFisicoRealCents: nextConteo,
       auditLogs: nextLogs,
     });
@@ -938,7 +1236,7 @@ export default function MiPolladaHuanucoApp() {
     );
   };
 
-  const handleDeliverPlate = (ticketNum: number) => {
+  const handleDeliverPlate = async (ticketNum: number) => {
     const target = tickets.find((t) => t.num === ticketNum);
     if (!target) return;
 
@@ -953,7 +1251,7 @@ export default function MiPolladaHuanucoApp() {
         ...auditLogs,
       ];
       setAuditLogs(nextLogs);
-      saveToCloud({ auditLogs: nextLogs });
+      await saveToCloud({ auditLogs: nextLogs });
       notify(
         `¡ALERTA ANTIFRAUDE! El ticket #${target.code} YA FUE ENTREGADO a las ${target.deliveredAt}.`,
         "error"
@@ -995,7 +1293,7 @@ export default function MiPolladaHuanucoApp() {
 
     setTickets(nextTickets);
     setAuditLogs(nextLogs);
-    saveToCloud({ tickets: nextTickets, auditLogs: nextLogs });
+    await saveToCloud({ tickets: nextTickets, auditLogs: nextLogs });
 
     notify(
       `¡Plato entregado! Ticket #${target.code} marcado como ENTREGADO.`,
@@ -1003,7 +1301,7 @@ export default function MiPolladaHuanucoApp() {
     );
   };
 
-  const handleVoidTicket = (ticketNum: number) => {
+  const handleVoidTicket = async (ticketNum: number) => {
     if (!requireMasterAuth("Anular Ticket")) return;
     const target = tickets.find((t) => t.num === ticketNum);
     if (!target) return;
@@ -1065,7 +1363,7 @@ export default function MiPolladaHuanucoApp() {
     setAuditLogs(nextLogs);
     setInspectedTicketNum(null);
 
-    saveToCloud({
+    await saveToCloud({
       tickets: nextTickets,
       payments: nextPayments,
       conteoFisicoRealCents: nextConteo,
@@ -1078,7 +1376,7 @@ export default function MiPolladaHuanucoApp() {
     );
   };
 
-  const handleSellBarItem = (
+  const handleSellBarItem = async (
     itemId: string,
     method: string = "EFECTIVO_CAJA"
   ) => {
@@ -1125,9 +1423,9 @@ export default function MiPolladaHuanucoApp() {
         "GASTO",
         "INFO",
         `Venta Barra: 1x ${target.name}`,
-        `Ingreso +${formatPEN(target.unitPriceCents)} en ${method}. Stock restante: ${
-          target.stock - 1
-        }.`
+        `Ingreso +${formatPEN(
+          target.unitPriceCents
+        )} en ${method}. Stock restante: ${target.stock - 1}.`
       ),
       ...auditLogs,
     ];
@@ -1137,7 +1435,7 @@ export default function MiPolladaHuanucoApp() {
     setConteoFisicoRealCents(nextConteo);
     setAuditLogs(nextLogs);
 
-    saveToCloud({
+    await saveToCloud({
       barItems: nextBar,
       payments: nextPayments,
       conteoFisicoRealCents: nextConteo,
@@ -1150,7 +1448,7 @@ export default function MiPolladaHuanucoApp() {
     );
   };
 
-  const handleRegisterExpense = () => {
+  const handleRegisterExpense = async () => {
     const amountCents = Math.round((parseFloat(expAmountSoles) || 0) * 100);
     if (amountCents <= 0) {
       notify("Ingresa un monto válido en Soles.", "error");
@@ -1213,7 +1511,7 @@ export default function MiPolladaHuanucoApp() {
     setExpConcept("");
     setExpAmountSoles("");
 
-    saveToCloud({
+    await saveToCloud({
       expenses: nextExpenses,
       barItems: nextBar,
       conteoFisicoRealCents: nextConteo,
@@ -1226,7 +1524,7 @@ export default function MiPolladaHuanucoApp() {
     );
   };
 
-  const handleAddNewBarProduct = () => {
+  const handleAddNewBarProduct = async () => {
     if (!requireMasterAuth("Añadir Producto a la Barra")) return;
     const priceCents = Math.round((parseFloat(newBarPriceSoles) || 0) * 100);
     if (!newBarName.trim() || priceCents <= 0) {
@@ -1259,46 +1557,11 @@ export default function MiPolladaHuanucoApp() {
     setNewBarName("");
     setNewBarPriceSoles("");
 
-    saveToCloud({ barItems: nextBar, auditLogs: nextLogs });
+    await saveToCloud({ barItems: nextBar, auditLogs: nextLogs });
     notify(`Producto «${newItem.name}» creado en la Barra.`, "success");
   };
 
-  const handleAddSeller = () => {
-    const clean = newSellerInput.trim();
-    if (!clean) return;
-    if (sellers.some((s) => s.name.toLowerCase() === clean.toLowerCase())) {
-      notify("Ese vendedor ya existe en la lista.", "warning");
-      return;
-    }
-
-    const nextSellers: SellerRecord[] = [
-      ...sellers,
-      {
-        id: `SEL-${Date.now()}`,
-        name: clean,
-        cashInHandCents: 0,
-        settledCents: 0,
-      },
-    ];
-
-    const nextLogs = [
-      makeAuditEntry(
-        "VENTA",
-        "INFO",
-        `Vendedor Habilitado: ${clean}`,
-        `Agregado al equipo por ${activeOperator}.`
-      ),
-      ...auditLogs,
-    ];
-
-    setSellers(nextSellers);
-    setAuditLogs(nextLogs);
-    setNewSellerInput("");
-    saveToCloud({ sellers: nextSellers, auditLogs: nextLogs });
-    notify(`Vendedor «${clean}» habilitado para usar su teléfono.`, "success");
-  };
-
-  const handleSettleSellerCash = (sellerId: string) => {
+  const handleSettleSellerCash = async (sellerId: string) => {
     if (!requireMasterAuth("Recibir Rendición de Vendedor")) return;
     const target = sellers.find((s) => s.id === sellerId);
     if (!target) return;
@@ -1340,7 +1603,7 @@ export default function MiPolladaHuanucoApp() {
     setConteoFisicoRealCents(nextConteo);
     setAuditLogs(nextLogs);
 
-    saveToCloud({
+    await saveToCloud({
       sellers: nextSellers,
       payments: nextPayments,
       conteoFisicoRealCents: nextConteo,
@@ -1357,10 +1620,11 @@ export default function MiPolladaHuanucoApp() {
     if (!requireMasterAuth("Crear Nuevo Evento")) return;
     if (!newEventTitleInput.trim()) return;
 
-    const slug = `pollada-hco-${Date.now()}`;
-    const prefix = `HCO${eventsList.length + 1}`;
+    const slug = `jcr-evento-${Date.now()}`;
+    const prefix = `JCR${eventsList.length + 1}`;
     const newCfg: EventConfig = {
       ...eventConfig,
+      promoter: "JCR EVENTOS",
       prefix,
       name: newEventTitleInput.trim(),
     };
@@ -1375,7 +1639,7 @@ export default function MiPolladaHuanucoApp() {
       makeAuditEntry(
         "ALERTA",
         "WARNING",
-        `Nuevo Evento Creado: ${newCfg.name}`,
+        `Nuevo Evento JCR EVENTOS Creado: ${newCfg.name}`,
         "Padrón limpio de 250 tickets inicializado."
       ),
     ];
@@ -1393,7 +1657,7 @@ export default function MiPolladaHuanucoApp() {
     setShowNewEventModal(false);
     setNewEventTitleInput("");
 
-    if (user && firestoreDb) {
+    if (firestoreDb) {
       const eventDocRef = doc(
         firestoreDb,
         "artifacts",
@@ -1403,20 +1667,24 @@ export default function MiPolladaHuanucoApp() {
         "pollada_events",
         slug
       );
-      await setDoc(eventDocRef, {
-        eventConfig: newCfg,
-        masterPin,
-        tickets: JSON.stringify(freshTickets),
-        barItems: JSON.stringify(freshBar),
-        payments: JSON.stringify([]),
-        expenses: JSON.stringify([]),
-        sellers: JSON.stringify(sellers),
-        auditLogs: JSON.stringify(freshLogs),
-        pollosRecibidos: 250,
-        fondoInicialCajaCents: 10000,
-        conteoFisicoRealCents: 10000,
-        updatedAt: Date.now(),
-      });
+      await setDoc(
+        eventDocRef,
+        {
+          eventConfig: newCfg,
+          masterPin,
+          tickets: JSON.stringify(freshTickets),
+          barItems: JSON.stringify(freshBar),
+          payments: JSON.stringify([]),
+          expenses: JSON.stringify([]),
+          sellers: JSON.stringify(sellers),
+          auditLogs: JSON.stringify(freshLogs),
+          pollosRecibidos: 250,
+          fondoInicialCajaCents: 10000,
+          conteoFisicoRealCents: 10000,
+          updatedAt: Date.now(),
+        },
+        { merge: true }
+      );
     }
 
     notify(`Evento «${newCfg.name}» creado con 250 tickets nuevos.`, "success");
@@ -1449,6 +1717,8 @@ export default function MiPolladaHuanucoApp() {
         return false;
       if (padronFilter === "ENTREGADO" && t.deliveryStatus !== "ENTREGADO")
         return false;
+      if (padronFilter === "MIS_VENTAS" && t.sellerName !== activeOperator)
+        return false;
 
       if (q) {
         return (
@@ -1459,7 +1729,7 @@ export default function MiPolladaHuanucoApp() {
       }
       return true;
     });
-  }, [tickets, padronFilter, padronSearch]);
+  }, [tickets, padronFilter, padronSearch, activeOperator]);
 
   const inspectedTicket = useMemo(() => {
     if (inspectedTicketNum === null) return null;
@@ -1541,264 +1811,244 @@ export default function MiPolladaHuanucoApp() {
 
   /**
    * ==========================================================================
-   * 8. INTERFAZ VISUAL AMPLIA Y RESPONSIVA (HUÁNUCO POS)
+   * 8. RENDERIZADO DE LA PLATAFORMA (MODO VENDEDOR CELULAR vs PANEL LAPTOP)
    * ==========================================================================
    */
   return (
     <div className="min-h-screen bg-[#FAF6F0] text-stone-900 pb-24 lg:pb-12 font-sans">
-      {/* CABECERA PRINCIPAL AMPLIA */}
-      <header className="bg-gradient-to-r from-stone-950 via-red-950 to-orange-950 text-white shadow-xl sticky top-0 z-40 border-b border-orange-500/30">
+      {/* CABECERA OFICIAL JCR EVENTOS */}
+      <header className="bg-gradient-to-r from-stone-950 via-red-950 to-orange-950 text-white shadow-xl sticky top-0 z-40 border-b border-orange-500/40">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            {/* Logo Pollería Huánuco */}
+            {/* Marca JCR EVENTOS */}
             <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-600 p-0.5 shadow-lg shrink-0">
-                <div className="w-full h-full bg-stone-950 rounded-[14px] flex items-center justify-center">
-                  <Flame className="w-6 h-6 text-amber-400" />
+              <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-amber-400 via-orange-500 to-red-600 p-0.5 shadow-lg shrink-0">
+                <div className="w-full h-full bg-stone-950 rounded-[14px] flex flex-col items-center justify-center">
+                  <Flame className="w-5 h-5 text-amber-400" />
+                  <span className="text-[8px] font-black tracking-tighter text-amber-300 leading-none">
+                    JCR
+                  </span>
                 </div>
               </div>
               <div>
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                  <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md bg-amber-400 text-stone-950 shadow-sm">
+                    JCR EVENTOS
+                  </span>
+                  <span
+                    className={`flex items-center gap-1 text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border ${
+                      syncStatus === "EN_VIVO"
+                        ? "bg-emerald-500/20 text-emerald-300 border-emerald-400/30"
+                        : syncStatus === "GUARDANDO"
+                        ? "bg-amber-500/20 text-amber-200 border-amber-400/30"
+                        : "bg-red-500/20 text-red-200 border-red-400/30"
+                    }`}
+                  >
                     <Cloud className="w-3 h-3" />
                     {syncStatus === "EN_VIVO"
-                      ? "EN VIVO • MULTI-TELÉFONO"
+                      ? "FIREBASE EN VIVO"
+                      : syncStatus === "GUARDANDO"
+                      ? "GUARDANDO..."
                       : "CONECTANDO..."}
                   </span>
-                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-white/10 text-amber-200">
-                    HUÁNUCO • PERÚ
-                  </span>
                 </div>
-                <h1 className="text-base sm:text-xl font-black tracking-tight text-white mt-0.5">
+                <h1 className="text-sm sm:text-lg font-black tracking-tight text-white mt-0.5">
                   {eventConfig.name}
                 </h1>
               </div>
             </div>
 
-            {/* Controles Superiores: Operador Móvil + Actividad + Clave Maestra */}
+            {/* Controles Superiores: Selector de Vendedor + Conmutador Modo Celular / Modo Laptop */}
             <div className="flex flex-wrap items-center gap-2">
-              {/* Selector de Vendedor en este Teléfono */}
-              <div className="bg-white/10 border border-white/15 rounded-xl px-2.5 py-1.5 flex items-center gap-2">
+              {/* Identificador de Vendedor */}
+              <div className="bg-white/10 border border-white/20 rounded-xl px-2.5 py-1.5 flex items-center gap-2">
                 <Smartphone className="w-4 h-4 text-amber-300 shrink-0" />
                 <div>
                   <span className="block text-[9px] uppercase font-bold text-stone-300 leading-none">
-                    Teléfono de:
+                    {lockedSellerByLink
+                      ? "Celular Bloqueado a:"
+                      : "Vendedor / Operador:"}
                   </span>
-                  <select
-                    value={activeOperator}
-                    onChange={(e) => {
-                      setActiveOperator(e.target.value);
-                      setPosSellerName(e.target.value);
-                      notify(
-                        `Operando este teléfono como: ${e.target.value}`,
-                        "info"
-                      );
-                    }}
-                    className="bg-transparent text-xs font-extrabold text-white focus:outline-none cursor-pointer"
-                  >
-                    {sellers.map((s) => (
-                      <option
-                        key={s.id}
-                        value={s.name}
-                        className="text-stone-900"
-                      >
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
+                  {lockedSellerByLink && !isMasterUnlocked ? (
+                    <span className="text-xs font-black text-amber-300">
+                      {activeOperator} 🔒
+                    </span>
+                  ) : (
+                    <select
+                      value={activeOperator}
+                      onChange={(e) => {
+                        setActiveOperator(e.target.value);
+                        setPosSellerName(e.target.value);
+                        notify(`Operando como: ${e.target.value}`, "info");
+                      }}
+                      className="bg-transparent text-xs font-extrabold text-white focus:outline-none cursor-pointer"
+                    >
+                      {sellers.map((s) => (
+                        <option
+                          key={s.id}
+                          value={s.name}
+                          className="text-stone-900"
+                        >
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               </div>
 
-              {/* Selector de Evento */}
-              <div className="bg-white/10 border border-white/15 rounded-xl px-2.5 py-1.5 flex items-center gap-1.5">
-                <select
-                  value={currentEventId}
-                  onChange={(e) => setCurrentEventId(e.target.value)}
-                  className="bg-transparent text-xs font-extrabold text-amber-200 focus:outline-none cursor-pointer"
-                >
-                  {eventsList.map((ev) => (
-                    <option
-                      key={ev.id}
-                      value={ev.id}
-                      className="text-stone-900"
-                    >
-                      {ev.name}
-                    </option>
-                  ))}
-                </select>
+              {/* Botón para cambiar entre MODO CELULAR VENDEDOR (Bloqueado) y PANEL LAPTOP COMPLETO */}
+              {viewMode === "PANEL_COMPLETO" ? (
                 <button
                   onClick={() => {
-                    if (requireMasterAuth("Crear Nueva Actividad")) {
-                      setShowNewEventModal(true);
-                    }
-                  }}
-                  title="Crear Nueva Actividad"
-                  className="p-1 rounded-lg bg-orange-600 hover:bg-orange-500 text-white"
-                >
-                  <FolderPlus className="w-3.5 h-3.5" />
-                </button>
-              </div>
-
-              {/* Botón Clave Maestra */}
-              <button
-                onClick={() => {
-                  if (isMasterUnlocked) {
-                    setIsMasterUnlocked(false);
+                    setViewMode("SOLO_VENDEDOR");
+                    setPosSellerName(activeOperator);
+                    setPosPayMode("EFECTIVO_VENDEDOR");
                     notify(
-                      "Candado cerrado. Volviste a Modo Vendedor.",
+                      "Activado Modo Exclusivo Vendedor (Solo Venta de Tickets). Ideal para celulares.",
                       "info"
                     );
-                  } else {
-                    setMasterPinInput("");
-                    setShowMasterModal(true);
-                  }
-                }}
-                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider border transition shadow-sm ${
-                  isMasterUnlocked
-                    ? "bg-emerald-600 border-emerald-400 text-white"
-                    : "bg-stone-800 border-stone-600 text-amber-300 hover:bg-stone-700"
-                }`}
-              >
-                {isMasterUnlocked ? (
-                  <Unlock className="w-3.5 h-3.5" />
-                ) : (
-                  <Lock className="w-3.5 h-3.5" />
-                )}
-                <span>{isMasterUnlocked ? "Admin Activo" : "Clave Maestra"}</span>
-              </button>
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black bg-amber-400 hover:bg-amber-300 text-stone-950 transition shadow-sm"
+                >
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>Modo Celular Vendedor</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    if (isMasterUnlocked) {
+                      setViewMode("PANEL_COMPLETO");
+                      setLockedSellerByLink(false);
+                    } else {
+                      setPendingMasterAction("ABRIR_PANEL_COMPLETO");
+                      setMasterPinInput("");
+                      setShowMasterModal(true);
+                    }
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black bg-stone-800 hover:bg-stone-700 text-amber-300 border border-amber-400/40 transition"
+                >
+                  <Monitor className="w-3.5 h-3.5" />
+                  <span>Abrir Panel Laptop 🔒</span>
+                </button>
+              )}
 
-              {/* Botón Exportar */}
-              <button
-                onClick={() => setShowExportModal(true)}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black bg-white text-stone-900 hover:bg-amber-50 transition shadow-sm"
-              >
-                <Download className="w-3.5 h-3.5 text-orange-600" />
-                <span className="hidden sm:inline">Exportar</span>
-              </button>
+              {/* Controles exclusivos del Panel Completo (Laptop) */}
+              {viewMode === "PANEL_COMPLETO" && (
+                <>
+                  <div className="hidden sm:flex bg-white/10 border border-white/15 rounded-xl px-2.5 py-1.5 items-center gap-1.5">
+                    <select
+                      value={currentEventId}
+                      onChange={(e) => setCurrentEventId(e.target.value)}
+                      className="bg-transparent text-xs font-extrabold text-amber-200 focus:outline-none cursor-pointer"
+                    >
+                      {eventsList.map((ev) => (
+                        <option
+                          key={ev.id}
+                          value={ev.id}
+                          className="text-stone-900"
+                        >
+                          {ev.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => {
+                        if (requireMasterAuth("Crear Nueva Actividad")) {
+                          setShowNewEventModal(true);
+                        }
+                      }}
+                      title="Crear Nueva Actividad"
+                      className="p-1 rounded-lg bg-orange-600 hover:bg-orange-500 text-white"
+                    >
+                      <FolderPlus className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      if (isMasterUnlocked) {
+                        setIsMasterUnlocked(false);
+                        notify("Candado de Clave Maestra cerrado.", "info");
+                      } else {
+                        setMasterPinInput("");
+                        setShowMasterModal(true);
+                      }
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black uppercase tracking-wider border transition ${
+                      isMasterUnlocked
+                        ? "bg-emerald-600 border-emerald-400 text-white"
+                        : "bg-stone-800 border-stone-600 text-amber-300"
+                    }`}
+                  >
+                    {isMasterUnlocked ? (
+                      <Unlock className="w-3.5 h-3.5" />
+                    ) : (
+                      <Lock className="w-3.5 h-3.5" />
+                    )}
+                    <span className="hidden sm:inline">
+                      {isMasterUnlocked ? "Admin Activo" : "Clave Maestra"}
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => setShowExportModal(true)}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black bg-white text-stone-900 hover:bg-amber-50 transition"
+                  >
+                    <Download className="w-3.5 h-3.5 text-orange-600" />
+                    <span className="hidden sm:inline">Excel</span>
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
-          {/* Navegación Desktop Amplia */}
-          <nav className="hidden lg:flex items-center gap-1.5 mt-3 pt-2.5 border-t border-white/10 overflow-x-auto">
-            {[
-              { id: "VENDER", label: "1. Vender Pollada y Barra", icon: Ticket },
-              { id: "PADRON", label: "2. Padrón 250 Tickets", icon: QrCode },
-              { id: "DESPACHO", label: "3. Cocina y Despacho", icon: Utensils },
-              { id: "GASTOS", label: "4. Fiesta, Barra y Gastos", icon: ShoppingBag },
-              { id: "VENDEDORES", label: "5. Vendedores (Teléfonos)", icon: Users },
-              { id: "CAJA", label: "6. Caja, Yape y Ganancia", icon: Wallet },
-              {
-                id: "ANTIFRAUDE",
-                label: `7. Historial Antifraude (${auditLogs.length})`,
-                icon: ShieldAlert,
-              },
-              { id: "CONFIG", label: "8. Configuración 🔒", icon: Settings },
-            ].map((item) => {
-              const Icon = item.icon;
-              const isAct = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveTab(item.id)}
-                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black whitespace-nowrap transition ${
-                    isAct
-                      ? "bg-amber-400 text-stone-950 shadow"
-                      : "text-stone-200 hover:bg-white/10"
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
-          </nav>
+          {/* Menú de 8 Módulos SOLO visible cuando estás en PANEL_COMPLETO (Laptop) */}
+          {viewMode === "PANEL_COMPLETO" && (
+            <nav className="hidden lg:flex items-center gap-1.5 mt-3 pt-2.5 border-t border-white/10 overflow-x-auto">
+              {[
+                { id: "VENDER", label: "1. Vender Pollada y Barra", icon: Ticket },
+                { id: "PADRON", label: "2. Padrón 250 Tickets", icon: QrCode },
+                { id: "DESPACHO", label: "3. Cocina y Despacho", icon: Utensils },
+                {
+                  id: "GASTOS",
+                  label: "4. Fiesta, Barra y Gastos",
+                  icon: ShoppingBag,
+                },
+                {
+                  id: "VENDEDORES",
+                  label: `5. Vendedores (${sellers.length}) y Links`,
+                  icon: Users,
+                },
+                { id: "CAJA", label: "6. Caja, Yape y Ganancia", icon: Wallet },
+                {
+                  id: "ANTIFRAUDE",
+                  label: `7. Historial Antifraude (${auditLogs.length})`,
+                  icon: ShieldAlert,
+                },
+                { id: "CONFIG", label: "8. Configuración 🔒", icon: Settings },
+              ].map((item) => {
+                const Icon = item.icon;
+                const isAct = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => setActiveTab(item.id)}
+                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black whitespace-nowrap transition ${
+                      isAct
+                        ? "bg-amber-400 text-stone-950 shadow"
+                        : "text-stone-200 hover:bg-white/10"
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          )}
         </div>
       </header>
-
-      {/* BARRA DE INDICADORES RÁPIDOS (KPIs) */}
-      <section className="bg-white border-b border-stone-200 shadow-sm">
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2.5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
-          <div className="p-2 rounded-xl bg-stone-50 border border-stone-200 flex items-center justify-between">
-            <div>
-              <span className="text-[10px] font-bold uppercase text-stone-500 block">
-                Tickets Libres
-              </span>
-              <strong className="text-base font-black text-stone-900">
-                {metrics.disponibles}
-              </strong>
-            </div>
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-stone-200 text-stone-700">
-              de 250
-            </span>
-          </div>
-
-          <div className="p-2 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-between">
-            <div>
-              <span className="text-[10px] font-bold uppercase text-amber-800 block">
-                Separados (Debe)
-              </span>
-              <strong className="text-base font-black text-amber-900">
-                {metrics.separados}
-              </strong>
-            </div>
-            <span className="text-[11px] font-extrabold text-amber-800">
-              {formatPEN(metrics.faltaCobrarSeparadosCents)}
-            </span>
-          </div>
-
-          <div className="p-2 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-between">
-            <div>
-              <span className="text-[10px] font-bold uppercase text-emerald-800 block">
-                Polladas Pagadas
-              </span>
-              <strong className="text-base font-black text-emerald-900">
-                {metrics.pagados}
-              </strong>
-            </div>
-            <span className="text-[11px] font-extrabold text-emerald-800">
-              {formatPEN(metrics.cobradoTicketsCents)}
-            </span>
-          </div>
-
-          <div className="p-2 rounded-xl bg-orange-50 border border-orange-200 flex items-center justify-between">
-            <div>
-              <span className="text-[10px] font-bold uppercase text-orange-800 block">
-                Platos en Cocina
-              </span>
-              <strong className="text-base font-black text-orange-900">
-                {metrics.platosQuedan}
-              </strong>
-            </div>
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-orange-200 text-orange-900">
-              {metrics.entregados} entregados
-            </span>
-          </div>
-
-          <div className="p-2 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-between">
-            <div>
-              <span className="text-[10px] font-bold uppercase text-blue-800 block">
-                Efectivo en Caja
-              </span>
-              <strong className="text-base font-black text-blue-900">
-                {formatPEN(metrics.efectivoDisponibleCajaCents)}
-              </strong>
-            </div>
-            <span className="text-[10px] font-bold text-blue-700">Físico</span>
-          </div>
-
-          <div className="p-2 rounded-xl bg-purple-50 border border-purple-200 flex items-center justify-between">
-            <div>
-              <span className="text-[10px] font-bold uppercase text-purple-800 block">
-                Saldo Yape / Plin
-              </span>
-              <strong className="text-base font-black text-purple-900">
-                {formatPEN(metrics.saldoDisponibleYapeCents)}
-              </strong>
-            </div>
-            <span className="text-[10px] font-bold text-purple-700">Digital</span>
-          </div>
-        </div>
-      </section>
 
       {/* AVISO FLOTANTE (TOAST) */}
       {toast && (
@@ -1824,157 +2074,214 @@ export default function MiPolladaHuanucoApp() {
               onClick={() => setToast(null)}
               className="text-xs font-black underline ml-4"
             >
-              CERRAR
+              OK
             </button>
           </div>
         </div>
       )}
 
-      {/* CONTENIDO PRINCIPAL AMPLIO */}
-      <main className="max-w-7xl mx-auto px-3 sm:px-6 py-5">
-        {/* ====================================================================
-            PESTAÑA 1: VENDER POLLADA Y BARRA
-        ===================================================================== */}
-        {activeTab === "VENDER" && (
-          <div className="grid lg:grid-cols-12 gap-6">
-            {/* Venta de Pollada (7 cols) */}
-            <div className="lg:col-span-7 bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-5">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-200 pb-4">
+      {/* ======================================================================
+          VISTA A: MODO EXCLUSIVO VENDEDOR PARA CELULARES / TABLETS (BLOQUEADO)
+          Solo permite vender tickets y consultar el padrón sin tocar Caja ni Config
+      ======================================================================= */}
+      {viewMode === "SOLO_VENDEDOR" && (
+        <main className="max-w-xl mx-auto px-3 py-4 space-y-4">
+          {/* Resumen limpio del vendedor */}
+          <div className="bg-gradient-to-r from-stone-900 to-stone-800 text-white rounded-3xl p-4 shadow-md border border-amber-500/30">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2.5 mb-3">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 block">
+                  TERMINAL MÓVIL EXCLUSIVA DE VENTA
+                </span>
+                <h2 className="text-base font-black">
+                  Vendedor: {activeOperator}
+                </h2>
+              </div>
+              <span className="text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2.5 py-1 rounded-full">
+                🔒 Modo Seguro
+              </span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="bg-white/10 rounded-2xl p-2.5">
+                <span className="text-[10px] text-stone-300 font-bold block">
+                  Tickets Libres
+                </span>
+                <strong className="text-xl font-black text-amber-300">
+                  {metrics.disponibles}
+                </strong>
+              </div>
+              <div className="bg-white/10 rounded-2xl p-2.5">
+                <span className="text-[10px] text-stone-300 font-bold block">
+                  Mis Ventas
+                </span>
+                <strong className="text-xl font-black text-white">
+                  {metrics.misTicketsTotal}
+                </strong>
+              </div>
+              <div className="bg-white/10 rounded-2xl p-2.5">
+                <span className="text-[10px] text-stone-300 font-bold block">
+                  Por Rendir
+                </span>
+                <strong className="text-base font-black text-emerald-300">
+                  {formatPEN(metrics.miEfectivoPorRendirCents)}
+                </strong>
+              </div>
+            </div>
+          </div>
+
+          {/* Selector de 2 pestañas simples para el Vendedor */}
+          <div className="grid grid-cols-2 gap-2 bg-stone-200 p-1.5 rounded-2xl">
+            <button
+              onClick={() => setSellerMobileSubTab("VENDER_TICKET")}
+              className={`py-3 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition ${
+                sellerMobileSubTab === "VENDER_TICKET"
+                  ? "bg-orange-600 text-white shadow"
+                  : "text-stone-700"
+              }`}
+            >
+              <Ticket className="w-4 h-4" />
+              <span>1. Vender Ticket</span>
+            </button>
+            <button
+              onClick={() => setSellerMobileSubTab("VER_PADRON")}
+              className={`py-3 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition ${
+                sellerMobileSubTab === "VER_PADRON"
+                  ? "bg-stone-900 text-white shadow"
+                  : "text-stone-700"
+              }`}
+            >
+              <QrCode className="w-4 h-4" />
+              <span>2. Ver 250 Tickets / WhatsApp</span>
+            </button>
+          </div>
+
+          {/* SUB-PESTAÑA MÓVIL 1: FORMULARIO DE VENTA DE TICKETS */}
+          {sellerMobileSubTab === "VENDER_TICKET" && (
+            <div className="bg-white rounded-3xl shadow-md border border-stone-200 p-5 space-y-4">
+              <div className="flex items-center justify-between border-b pb-3">
                 <div>
-                  <span className="text-[11px] font-black uppercase tracking-wider text-orange-600">
-                    Punto de Venta Rápido
+                  <span className="text-[10px] font-black uppercase text-orange-600">
+                    JCR EVENTOS • {formatPEN(eventConfig.unitPriceCents)}
                   </span>
-                  <h2 className="text-xl font-black text-stone-900">
-                    1. Vender o Separar Pollada ({formatPEN(eventConfig.unitPriceCents)})
-                  </h2>
+                  <h3 className="text-lg font-black text-stone-900">
+                    Registrar Venta de Ticket
+                  </h3>
                 </div>
                 <button
+                  type="button"
                   onClick={() => {
                     const free = tickets.find(
                       (t) => t.assignmentStatus === "DISPONIBLE"
                     );
                     if (free) setPosTicketNums(String(free.num));
                   }}
-                  className="text-xs font-black bg-orange-100 hover:bg-orange-200 text-orange-900 px-3 py-2 rounded-xl"
+                  className="text-xs font-black bg-orange-100 text-orange-900 px-3 py-2 rounded-xl"
                 >
-                  ⚡ Buscar N.º Libre
+                  ⚡ N.º Libre
                 </button>
               </div>
 
-              <div className="grid sm:grid-cols-12 gap-4">
-                <div className="sm:col-span-4">
+              <div className="grid grid-cols-12 gap-3">
+                <div className="col-span-5">
                   <label className="block text-xs font-extrabold text-stone-700 mb-1">
-                    N.º Ticket (1 al 250)
+                    N.º Ticket (1-250)
                   </label>
                   <input
                     type="text"
                     value={posTicketNums}
                     onChange={(e) => setPosTicketNums(e.target.value)}
-                    placeholder="Ej: 12 o 12,13"
-                    className="w-full p-3 border-2 border-orange-500 rounded-2xl font-mono font-black text-xl text-center bg-orange-50/40"
+                    placeholder="Ej: 15"
+                    className="w-full p-3 border-2 border-orange-500 rounded-2xl font-mono font-black text-2xl text-center bg-orange-50/40"
                   />
                 </div>
-                <div className="sm:col-span-8">
+                <div className="col-span-7">
                   <label className="block text-xs font-extrabold text-stone-700 mb-1">
-                    Nombre del Cliente / Comprador
-                  </label>
-                  <input
-                    type="text"
-                    value={posBuyerName}
-                    onChange={(e) => setPosBuyerName(e.target.value)}
-                    placeholder="Ej. Familia Rojas / Juan Pérez"
-                    className="w-full p-3 border border-stone-300 rounded-2xl text-sm font-bold"
-                  />
-                  <span className="block text-[11px] text-stone-500 mt-1">
-                    Para varios tickets sepáralos con coma (ej: 15, 16, 17).
-                  </span>
-                </div>
-              </div>
-
-              <div className="grid sm:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-extrabold text-stone-700 mb-1">
-                    Celular WhatsApp
+                    Celular WhatsApp Cliente
                   </label>
                   <input
                     type="tel"
                     value={posBuyerPhone}
                     onChange={(e) => setPosBuyerPhone(e.target.value)}
                     placeholder="Ej. 962123456"
-                    className="w-full p-2.5 border border-stone-300 rounded-xl text-sm font-semibold"
+                    className="w-full p-3.5 border border-stone-300 rounded-2xl text-sm font-bold"
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-extrabold text-stone-700 mb-1">
-                    Vendedor Responsable
-                  </label>
-                  <select
-                    value={posSellerName}
-                    onChange={(e) => setPosSellerName(e.target.value)}
-                    className="w-full p-2.5 border border-stone-300 rounded-xl text-sm font-bold bg-white"
-                  >
-                    {sellers.map((s) => (
-                      <option key={s.id} value={s.name}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-extrabold text-stone-700 mb-1">
-                    Modalidad Despacho
-                  </label>
-                  <select
-                    value={posServiceType}
-                    onChange={(e) => setPosServiceType(e.target.value)}
-                    className="w-full p-2.5 border border-stone-300 rounded-xl text-sm font-bold bg-white"
-                  >
-                    <option value="MESA_LOCAL">Comer en el Local</option>
-                    <option value="PARA_LLEVAR">Para Llevar</option>
-                    <option value="DELIVERY_HUANUCO">Delivery Huánuco</option>
-                  </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-extrabold text-stone-700 mb-1">
+                  Nombre y Apellido del Comprador
+                </label>
+                <input
+                  type="text"
+                  value={posBuyerName}
+                  onChange={(e) => setPosBuyerName(e.target.value)}
+                  placeholder="Ej. Familia Gómez / Carlos Soto"
+                  className="w-full p-3.5 border border-stone-300 rounded-2xl text-sm font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-extrabold text-stone-700 mb-1">
+                  Modalidad de Entrega
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: "MESA_LOCAL", label: "🍽️ En Local" },
+                    { id: "PARA_LLEVAR", label: "🛍️ Para Llevar" },
+                    { id: "DELIVERY_HUANUCO", label: "🛵 Delivery" },
+                  ].map((st) => (
+                    <button
+                      key={st.id}
+                      type="button"
+                      onClick={() => setPosServiceType(st.id)}
+                      className={`py-2.5 px-2 rounded-xl border text-xs font-black ${
+                        posServiceType === st.id
+                          ? "bg-stone-900 text-white border-stone-900"
+                          : "bg-stone-50 text-stone-700 border-stone-200"
+                      }`}
+                    >
+                      {st.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
               <div>
                 <label className="block text-xs font-extrabold text-stone-700 mb-1.5">
-                  ¿Cómo se paga esta pollada?
+                  ¿Cómo te está pagando el cliente?
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   {[
                     {
-                      id: "EFECTIVO_CAJA",
-                      title: "💵 Efectivo Caja",
-                      sub: "Directo a gaveta",
+                      id: "EFECTIVO_VENDEDOR",
+                      title: "💵 Efectivo",
+                      sub: "Lo cobro yo",
                     },
                     {
                       id: "YAPE_EVENTO",
                       title: "📱 Yape / Plin",
-                      sub: "Cuenta digital",
-                    },
-                    {
-                      id: "EFECTIVO_VENDEDOR",
-                      title: "👤 Cobró Vendedor",
-                      sub: "Queda por rendir",
+                      sub: "Cuenta JCR",
                     },
                     {
                       id: "SOLO_SEPARAR",
-                      title: "⏳ Solo Separar",
-                      sub: "Paga al recoger",
+                      title: "⏳ Separar",
+                      sub: "Falta pagar",
                     },
                   ].map((m) => (
                     <button
                       key={m.id}
                       type="button"
                       onClick={() => setPosPayMode(m.id)}
-                      className={`p-3 rounded-2xl border-2 text-left transition ${
+                      className={`p-3 rounded-2xl border-2 text-center transition ${
                         posPayMode === m.id
-                          ? "bg-stone-900 text-white border-orange-500 shadow"
-                          : "bg-stone-50 text-stone-800 border-stone-200 hover:bg-stone-100"
+                          ? "bg-orange-600 text-white border-orange-700 shadow"
+                          : "bg-stone-50 text-stone-800 border-stone-200"
                       }`}
                     >
                       <span className="block text-xs font-black">{m.title}</span>
-                      <span className="block text-[10px] opacity-80 mt-0.5">
+                      <span className="block text-[10px] opacity-85 mt-0.5">
                         {m.sub}
                       </span>
                     </button>
@@ -1982,302 +2289,93 @@ export default function MiPolladaHuanucoApp() {
                 </div>
               </div>
 
-              {posPayMode === "EFECTIVO_CAJA" && (
-                <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-extrabold text-stone-800">
-                      Billete recibido S/:
-                    </span>
-                    <input
-                      type="number"
-                      value={posBilleteSoles}
-                      onChange={(e) => setPosBilleteSoles(e.target.value)}
-                      className="w-24 p-2 rounded-xl border border-amber-400 font-black text-center text-base bg-white"
-                    />
-                    <div className="flex gap-1">
-                      {[20, 50, 100].map((b) => (
-                        <button
-                          key={b}
-                          type="button"
-                          onClick={() => setPosBilleteSoles(String(b))}
-                          className="px-2.5 py-1.5 rounded-lg bg-white border border-amber-300 text-xs font-black"
-                        >
-                          S/ {b}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-xs font-bold text-stone-600 block">
-                      Total a cobrar:{" "}
-                      <strong>{formatPEN(posTotalCobrarCents)}</strong>
-                    </span>
-                    <span className="text-xs font-extrabold text-orange-900">
-                      Vuelto a entregar:{" "}
-                      <strong className="text-lg font-black">
-                        {formatPEN(posVueltoCents)}
-                      </strong>
-                    </span>
-                  </div>
-                </div>
-              )}
-
               {posPayMode === "YAPE_EVENTO" && (
-                <div className="p-4 rounded-2xl bg-purple-50 border border-purple-200">
+                <div className="p-3.5 rounded-2xl bg-purple-50 border border-purple-200">
                   <label className="block text-xs font-extrabold text-purple-900 mb-1">
-                    N.º Operación / Titular Yape (Verificación Antifraude)
+                    N.º Operación o Nombre de quien Yapeó
                   </label>
                   <input
                     type="text"
                     value={posYapeRef}
                     onChange={(e) => setPosYapeRef(e.target.value)}
-                    placeholder="Ej. Op. 394810 - Yapeó María"
+                    placeholder="Ej. Op. 8492 - Yapeó Rosa"
                     className="w-full p-2.5 rounded-xl border border-purple-300 text-xs font-bold bg-white"
                   />
                 </div>
               )}
 
-              {posPayMode !== "SOLO_SEPARAR" && (
-                <label className="flex items-center gap-2.5 p-3.5 rounded-2xl bg-stone-100 border border-stone-200 cursor-pointer text-xs sm:text-sm font-extrabold text-stone-800">
-                  <input
-                    type="checkbox"
-                    checked={posDeliverNow}
-                    onChange={(e) => setPosDeliverNow(e.target.checked)}
-                    className="w-5 h-5 accent-orange-600 rounded"
-                  />
-                  <span>
-                    Entregar el plato en este instante (Descontar de Cocina y
-                    marcar ENTREGADO)
-                  </span>
-                </label>
-              )}
-
               <button
                 type="button"
                 onClick={handleSellOrReserveTickets}
-                className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white font-black text-base shadow-lg transition"
+                className="w-full py-4 rounded-2xl bg-gradient-to-r from-orange-600 to-red-600 text-white font-black text-base shadow-lg active:scale-95 transition"
               >
                 {posPayMode === "SOLO_SEPARAR"
-                  ? `SEPARAR ${parsedPosNums.length || 1} TICKET(S) — FALTA PAGAR ${formatPEN(
-                      posTotalCobrarCents
-                    )}`
-                  : `GUARDAR VENTA (${parsedPosNums.length || 1} TICKET • ${formatPEN(
-                      posTotalCobrarCents
-                    )})`}
+                  ? `SEPARAR TICKET (${formatPEN(posTotalCobrarCents)})`
+                  : `CONFIRMAR VENTA (${formatPEN(posTotalCobrarCents)})`}
               </button>
             </div>
+          )}
 
-            {/* Venta Rápida de Barra (5 cols) */}
-            <div className="lg:col-span-5 bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 flex flex-col justify-between space-y-4">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between border-b border-stone-200 pb-4">
-                  <div>
-                    <span className="text-[11px] font-black uppercase tracking-wider text-emerald-700">
-                      Cantina / Bebidas
-                    </span>
-                    <h2 className="text-xl font-black text-stone-900">
-                      2. Venta Rápida de Barra
-                    </h2>
-                  </div>
-                  <span className="text-xs font-black bg-emerald-100 text-emerald-900 px-3 py-1.5 rounded-xl">
-                    Barra: {formatPEN(metrics.ingresosBarraCents)}
-                  </span>
-                </div>
+          {/* SUB-PESTAÑA MÓVIL 2: PADRÓN DE CONSULTA Y ENVÍO DE WHATSAPP */}
+          {sellerMobileSubTab === "VER_PADRON" && (
+            <div className="bg-white rounded-3xl shadow-md border border-stone-200 p-4 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <input
+                  type="text"
+                  value={padronSearch}
+                  onChange={(e) => setPadronSearch(e.target.value)}
+                  placeholder="Buscar N.º o cliente..."
+                  className="px-3 py-2 rounded-xl border border-stone-300 text-xs font-bold flex-1"
+                />
+                <select
+                  value={padronFilter}
+                  onChange={(e) => setPadronFilter(e.target.value)}
+                  className="px-3 py-2 rounded-xl border border-stone-300 text-xs font-black bg-stone-50"
+                >
+                  <option value="TODOS">Todos (250)</option>
+                  <option value="DISPONIBLE">
+                    🟢 Libres ({metrics.disponibles})
+                  </option>
+                  <option value="MIS_VENTAS">
+                    👤 Mis Ventas ({metrics.misTicketsTotal})
+                  </option>
+                  <option value="FALTA_PAGAR">🟡 Separados</option>
+                </select>
+              </div>
 
-                <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
-                  {barItems.map((item) => (
-                    <div
-                      key={item.id}
-                      className="p-3.5 rounded-2xl border border-stone-200 bg-stone-50 flex flex-wrap items-center justify-between gap-2"
-                    >
-                      <div>
-                        <div className="font-black text-sm text-stone-900">
-                          {item.name} —{" "}
-                          <span className="text-orange-700">
-                            {formatPEN(item.unitPriceCents)}
-                          </span>
-                        </div>
-                        <div className="text-xs text-stone-600 mt-0.5">
-                          Stock:{" "}
-                          <strong
-                            className={
-                              item.stock > 0
-                                ? "text-emerald-700"
-                                : "text-red-600"
-                            }
-                          >
-                            {item.stock} und.
-                          </strong>{" "}
-                          • Vendidos: <strong>{item.soldQty}</strong>
-                        </div>
-                      </div>
-                      <div className="flex gap-1.5">
-                        <button
-                          onClick={() =>
-                            handleSellBarItem(item.id, "EFECTIVO_CAJA")
-                          }
-                          className="px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-black shadow-sm"
-                        >
-                          +1 Efectivo
-                        </button>
-                        <button
-                          onClick={() =>
-                            handleSellBarItem(item.id, "YAPE_EVENTO")
-                          }
-                          className="px-3 py-2 rounded-xl bg-purple-700 hover:bg-purple-800 text-white text-xs font-black shadow-sm"
-                        >
-                          +1 Yape
-                        </button>
-                      </div>
+              {inspectedTicket && (
+                <div className="p-4 rounded-2xl border-2 border-orange-500 bg-orange-50/40 space-y-3">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="text-[10px] font-black uppercase text-orange-700">
+                        Ticket Oficial #{inspectedTicket.code} • JCR EVENTOS
+                      </span>
+                      <h4 className="text-base font-black text-stone-900">
+                        {inspectedTicket.buyerName || "Ticket Libre"}
+                      </h4>
+                      <p className="text-xs text-stone-600">
+                        Vendedor: <strong>{inspectedTicket.sellerName}</strong>{" "}
+                        • Estado: <strong>{inspectedTicket.paymentStatus}</strong>
+                      </p>
                     </div>
-                  ))}
-                </div>
-              </div>
-
-              <button
-                onClick={() => setActiveTab("GASTOS")}
-                className="w-full py-2.5 px-3 rounded-xl border border-orange-300 bg-orange-50 text-orange-900 text-xs font-black hover:bg-orange-100"
-              >
-                + Abastecer Stock o Registrar Gasto de Fiesta →
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ====================================================================
-            PESTAÑA 2: PADRÓN DE 250 TICKETS + DETALLE QR Y ANULACIÓN
-        ===================================================================== */}
-        {activeTab === "PADRON" && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-stone-200 pb-4">
-                <div>
-                  <h2 className="text-xl font-black text-stone-900">
-                    Padrón Oficial de 250 Tickets (001 al 250)
-                  </h2>
-                  <p className="text-xs text-stone-600">
-                    Toca cualquier número para ver su QR antifraude, enviar por
-                    WhatsApp, cobrar o despachar.
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    type="text"
-                    value={padronSearch}
-                    onChange={(e) => setPadronSearch(e.target.value)}
-                    placeholder="Buscar N.º, cliente o vendedor..."
-                    className="px-3.5 py-2 rounded-xl border border-stone-300 text-xs font-bold w-56"
-                  />
-                  <select
-                    value={padronFilter}
-                    onChange={(e) => setPadronFilter(e.target.value)}
-                    className="px-3.5 py-2 rounded-xl border border-stone-300 text-xs font-black bg-stone-50"
-                  >
-                    <option value="TODOS">Todos los 250 Tickets</option>
-                    <option value="DISPONIBLE">
-                      🟢 Libres ({metrics.disponibles})
-                    </option>
-                    <option value="FALTA_PAGAR">
-                      🟡 Separados - Falta Pagar ({metrics.separados})
-                    </option>
-                    <option value="PAGADO">
-                      💵 Pagados ({metrics.pagados})
-                    </option>
-                    <option value="FALTA_ENTREGAR">
-                      🍗 Pagados por Recoger Plato
-                    </option>
-                    <option value="ENTREGADO">
-                      ⬛ Ya Entregados ({metrics.entregados})
-                    </option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-5 sm:grid-cols-10 gap-2 max-h-[500px] overflow-y-auto p-1">
-                {filteredPadronTickets.map((t) => {
-                  let style =
-                    "bg-stone-50 border-stone-300 text-stone-700 hover:border-orange-500";
-                  let tag = "LIBRE";
-                  if (t.deliveryStatus === "ENTREGADO") {
-                    style = "bg-stone-900 border-stone-900 text-white";
-                    tag = "ENTREGADO";
-                  } else if (t.paymentStatus === "PAGADO") {
-                    style =
-                      "bg-emerald-100 border-emerald-500 text-emerald-950 font-black";
-                    tag = "PAGADO";
-                  } else if (t.assignmentStatus === "RESERVADO") {
-                    style =
-                      "bg-amber-100 border-amber-500 text-amber-950 font-black";
-                    tag = "DEBE";
-                  }
-
-                  return (
                     <button
-                      key={t.num}
-                      onClick={() => setInspectedTicketNum(t.num)}
-                      className={`p-2 rounded-xl border-2 text-center flex flex-col items-center justify-center transition transform hover:scale-105 ${style}`}
+                      onClick={() => setInspectedTicketNum(null)}
+                      className="text-xs font-black bg-stone-200 px-2.5 py-1 rounded-lg"
                     >
-                      <span className="font-mono font-black text-xs sm:text-sm">
-                        {t.code}
-                      </span>
-                      <span className="text-[8px] font-black tracking-tighter mt-0.5 truncate max-w-full">
-                        {t.buyerName ? t.buyerName.split(" ")[0] : tag}
-                      </span>
+                      ✕
                     </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {inspectedTicket && (
-              <div className="bg-white rounded-3xl shadow-xl border-2 border-orange-500 p-5 sm:p-6 space-y-4">
-                <div className="flex flex-wrap justify-between items-start gap-4 border-b border-stone-200 pb-4">
-                  <div>
-                    <span className="text-xs font-black uppercase text-orange-600">
-                      Inspector Antifraude • Ticket N.º {inspectedTicket.code}
-                    </span>
-                    <h3 className="text-2xl font-black text-stone-900 mt-0.5">
-                      {inspectedTicket.buyerName || "Ticket Libre (Disponible)"}
-                    </h3>
-                    <p className="text-xs text-stone-600 font-semibold">
-                      Vendedor: <strong>{inspectedTicket.sellerName}</strong> •
-                      Modalidad: <strong>{inspectedTicket.serviceType}</strong>
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setInspectedTicketNum(null)}
-                    className="px-3 py-1.5 rounded-xl bg-stone-200 text-stone-800 text-xs font-black"
-                  >
-                    Cerrar ✕
-                  </button>
-                </div>
-
-                <div className="grid md:grid-cols-3 gap-5 items-center">
-                  <div className="p-4 rounded-2xl bg-stone-900 text-white text-center space-y-2">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-amber-400 block">
-                      Token Único Antifraude
-                    </span>
-                    <div className="font-mono font-black text-base tracking-wider bg-white/10 py-2 px-3 rounded-xl border border-white/15">
-                      {inspectedTicket.qrToken}
-                    </div>
-                    <span className="text-[11px] text-stone-300 block">
-                      {inspectedTicket.deliveredAt
-                        ? `Entregado a las ${inspectedTicket.deliveredAt} por ${inspectedTicket.deliveredBy}`
-                        : "Plato aún en cocina"}
-                    </span>
                   </div>
 
-                  <div className="md:col-span-2 flex flex-wrap gap-2.5">
+                  <div className="flex flex-wrap gap-2">
                     {inspectedTicket.assignmentStatus === "DISPONIBLE" && (
                       <button
                         onClick={() => {
                           setPosTicketNums(String(inspectedTicket.num));
-                          setActiveTab("VENDER");
+                          setSellerMobileSubTab("VENDER_TICKET");
                         }}
-                        className="px-5 py-3 rounded-2xl bg-orange-600 text-white text-xs font-black shadow"
+                        className="w-full py-2.5 rounded-xl bg-orange-600 text-white text-xs font-black"
                       >
-                        🎟️ Vender o Separar este Ticket (#{inspectedTicket.code})
+                        🎟️ Vender este Ticket (#{inspectedTicket.code})
                       </button>
                     )}
 
@@ -2288,13 +2386,12 @@ export default function MiPolladaHuanucoApp() {
                             onClick={() =>
                               handlePayReservedTicket(
                                 inspectedTicket.num,
-                                "EFECTIVO_CAJA"
+                                "EFECTIVO_VENDEDOR"
                               )
                             }
-                            className="px-4 py-3 rounded-2xl bg-emerald-700 text-white text-xs font-black shadow"
+                            className="flex-1 py-2.5 rounded-xl bg-emerald-700 text-white text-xs font-black"
                           >
-                            💵 Cobrar Efectivo (
-                            {formatPEN(inspectedTicket.agreedPriceCents)})
+                            💵 Cobrar Efectivo
                           </button>
                           <button
                             onClick={() =>
@@ -2303,827 +2400,1629 @@ export default function MiPolladaHuanucoApp() {
                                 "YAPE_EVENTO"
                               )
                             }
-                            className="px-4 py-3 rounded-2xl bg-purple-700 text-white text-xs font-black shadow"
+                            className="flex-1 py-2.5 rounded-xl bg-purple-700 text-white text-xs font-black"
                           >
-                            📱 Cobrar Yape (
-                            {formatPEN(inspectedTicket.agreedPriceCents)})
+                            📱 Cobrar Yape
                           </button>
                         </>
                       )}
 
-                    {inspectedTicket.paymentStatus === "PAGADO" &&
-                      inspectedTicket.deliveryStatus !== "ENTREGADO" && (
-                        <button
-                          onClick={() =>
-                            handleDeliverPlate(inspectedTicket.num)
-                          }
-                          className="px-5 py-3 rounded-2xl bg-stone-900 text-white text-xs font-black shadow"
-                        >
-                          🍗 Despachar y Entregar Plato Ahora
-                        </button>
-                      )}
-
                     {inspectedTicket.assignmentStatus !== "DISPONIBLE" && (
-                      <>
-                        <a
-                          href={`https://wa.me/${(
-                            inspectedTicket.buyerPhone || ""
-                          ).replace(/\D/g, "")}?text=${encodeURIComponent(
-                            `🍗 *${eventConfig.name.toUpperCase()} - HUÁNUCO*\n🎟️ Ticket Oficial N.º *${
-                              inspectedTicket.code
-                            }*\n👤 Cliente: ${
-                              inspectedTicket.buyerName
-                            }\n💳 Estado: *${
-                              inspectedTicket.paymentStatus
-                            }*\n🔐 Token QR Antifraude: ${
-                              inspectedTicket.qrToken
-                            }\n📍 Dirección: ${eventConfig.address}`
-                          )}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="px-4 py-3 rounded-2xl bg-emerald-600 text-white text-xs font-black shadow"
-                        >
-                          📲 Enviar Ticket por WhatsApp
-                        </a>
-                        <button
-                          onClick={() => handleVoidTicket(inspectedTicket.num)}
-                          className="px-4 py-3 rounded-2xl bg-red-100 hover:bg-red-200 text-red-900 text-xs font-black"
-                        >
-                          🔒 Anular / Liberar Ticket (Clave Maestra)
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ====================================================================
-            PESTAÑA 3: COCINA Y DESPACHO DE PLATOS
-        ===================================================================== */}
-        {activeTab === "DESPACHO" && (
-          <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-5">
-            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-stone-200 pb-4">
-              <div>
-                <span className="text-[11px] font-black uppercase tracking-wider text-orange-600">
-                  Control de Cocina Huánuco
-                </span>
-                <h2 className="text-xl font-black text-stone-900">
-                  Despacho de Platos y Verificador Anti-Doble Entrega
-                </h2>
-                <p className="text-xs text-stone-600">
-                  Si alguien intenta recoger dos veces con el mismo ticket,
-                  saltará una alerta roja en el Historial Antifraude.
-                </p>
-              </div>
-              <div className="bg-orange-50 border border-orange-200 px-4 py-2.5 rounded-2xl">
-                <span className="text-[10px] font-bold uppercase text-orange-800 block">
-                  Platos Físicos Disponibles
-                </span>
-                <strong className="text-2xl font-black text-orange-900">
-                  {metrics.platosQuedan}
-                </strong>
-              </div>
-            </div>
-
-            <div className="relative">
-              <Search className="w-5 h-5 text-stone-400 absolute left-4 top-4" />
-              <input
-                type="text"
-                value={despachoSearch}
-                onChange={(e) => setDespachoSearch(e.target.value)}
-                placeholder="Busca por N.º de Ticket (ej. 045), nombre del cliente o token QR..."
-                className="w-full p-4 pl-12 rounded-2xl border-2 border-stone-300 focus:border-orange-500 focus:outline-none text-sm sm:text-base font-extrabold"
-              />
-            </div>
-
-            <div className="grid md:grid-cols-2 gap-3">
-              {filteredDespachoTickets.map((t) => {
-                const isDelivered = t.deliveryStatus === "ENTREGADO";
-                const isPaid = t.paymentStatus === "PAGADO";
-                return (
-                  <div
-                    key={t.num}
-                    className={`p-4 rounded-2xl border-2 flex flex-wrap items-center justify-between gap-3 ${
-                      isDelivered
-                        ? "bg-red-50 border-red-400"
-                        : isPaid
-                        ? "bg-emerald-50 border-emerald-500"
-                        : "bg-amber-50 border-amber-400"
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-black text-lg text-stone-900">
-                          #{t.code}
-                        </span>
-                        <span
-                          className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
-                            isPaid
-                              ? "bg-emerald-200 text-emerald-950"
-                              : "bg-amber-300 text-amber-950"
-                          }`}
-                        >
-                          {t.paymentStatus}
-                        </span>
-                        <span className="text-[10px] font-bold text-stone-600">
-                          {t.serviceType}
-                        </span>
-                      </div>
-                      <p className="font-black text-sm text-stone-900 mt-0.5">
-                        {t.buyerName || "Cliente"}
-                      </p>
-                      <p className="text-[11px] font-mono text-stone-500">
-                        {t.qrToken}{" "}
-                        {isDelivered
-                          ? `• ⚠️ ENTREGADO (${t.deliveredAt})`
-                          : ""}
-                      </p>
-                    </div>
-                    <div className="flex gap-2">
-                      {!isPaid && (
-                        <button
-                          onClick={() =>
-                            handlePayReservedTicket(t.num, "EFECTIVO_CAJA")
-                          }
-                          className="px-3 py-2.5 rounded-xl bg-amber-600 text-white text-xs font-black"
-                        >
-                          Cobrar {formatPEN(t.agreedPriceCents)}
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handleDeliverPlate(t.num)}
-                        className={`px-4 py-2.5 rounded-xl text-xs font-black shadow ${
-                          isDelivered
-                            ? "bg-red-700 text-white"
-                            : "bg-stone-900 text-white hover:bg-stone-800"
-                        }`}
+                      <a
+                        href={`https://wa.me/${(
+                          inspectedTicket.buyerPhone || ""
+                        ).replace(/\D/g, "")}?text=${encodeURIComponent(
+                          `🍗 *JCR EVENTOS - ${eventConfig.name.toUpperCase()}*\n🎟️ Ticket Oficial N.º *${
+                            inspectedTicket.code
+                          }*\n👤 Cliente: ${
+                            inspectedTicket.buyerName
+                          }\n💳 Estado: *${
+                            inspectedTicket.paymentStatus
+                          }*\n🔐 Token QR Antifraude: ${
+                            inspectedTicket.qrToken
+                          }\n📍 Lugar: ${eventConfig.address}`
+                        )}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="w-full py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-black text-center"
                       >
-                        {isDelivered
-                          ? "🚨 Verificar Alerta"
-                          : "🍗 Entregar Plato"}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* ====================================================================
-            PESTAÑA 4: FIESTA, STOCK DE BARRA Y GASTOS
-        ===================================================================== */}
-        {activeTab === "GASTOS" && (
-          <div className="grid lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-6 bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-4">
-              <h2 className="text-xl font-black text-stone-900 border-b pb-3">
-                Registrar Compra de Barra o Gasto del Local
-              </h2>
-
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { id: "COMPRA_BARRA", label: "🍾 Abastecer Barra" },
-                  { id: "PAGO_POLLOS", label: "🍗 Pollos / Carbón" },
-                  { id: "GASTO_FIESTA", label: "🎵 Orquesta / Local" },
-                ].map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => setExpCategory(c.id)}
-                    className={`p-3 rounded-2xl border text-xs font-black ${
-                      expCategory === c.id
-                        ? "bg-orange-600 text-white border-orange-600"
-                        : "bg-stone-50 text-stone-700 border-stone-300"
-                    }`}
-                  >
-                    {c.label}
-                  </button>
-                ))}
-              </div>
-
-              {expCategory === "COMPRA_BARRA" && (
-                <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 grid sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-extrabold text-emerald-900 mb-1">
-                      Producto a recargar
-                    </label>
-                    <select
-                      value={expBarProductId}
-                      onChange={(e) => setExpBarProductId(e.target.value)}
-                      className="w-full p-2.5 rounded-xl border border-emerald-300 bg-white text-xs font-black"
-                    >
-                      {barItems.map((b) => (
-                        <option key={b.id} value={b.id}>
-                          {b.name} (Stock: {b.stock})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-extrabold text-emerald-900 mb-1">
-                      Unidades que ingresan (+Stock)
-                    </label>
-                    <input
-                      type="number"
-                      value={expBarUnits}
-                      onChange={(e) => setExpBarUnits(e.target.value)}
-                      className="w-full p-2.5 rounded-xl border border-emerald-300 bg-white text-sm font-black text-center"
-                    />
+                        📲 Enviar Ticket QR por WhatsApp al Cliente
+                      </a>
+                    )}
                   </div>
                 </div>
               )}
 
-              <div className="grid sm:grid-cols-3 gap-3">
-                <div className="sm:col-span-2">
-                  <label className="block text-xs font-extrabold text-stone-700 mb-1">
-                    Concepto / Detalle
-                  </label>
-                  <input
-                    type="text"
-                    value={expConcept}
-                    onChange={(e) => setExpConcept(e.target.value)}
-                    placeholder="Ej. 2 cajas de cerveza / Pago DJ"
-                    className="w-full p-3 border border-stone-300 rounded-xl text-sm font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-extrabold text-stone-700 mb-1">
-                    Monto S/
-                  </label>
-                  <input
-                    type="number"
-                    step="0.50"
-                    value={expAmountSoles}
-                    onChange={(e) => setExpAmountSoles(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full p-3 border border-stone-300 rounded-xl text-base font-black text-center"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { id: "EFECTIVO_CAJA", label: "💵 Sale de Caja" },
-                  { id: "YAPE_EVENTO", label: "📱 Sale de Yape" },
-                  { id: "POR_PAGAR", label: "📝 Por Pagar" },
-                ].map((o) => (
-                  <button
-                    key={o.id}
-                    type="button"
-                    onClick={() => setExpOrigin(o.id)}
-                    className={`p-2.5 rounded-xl border text-xs font-black ${
-                      expOrigin === o.id
-                        ? "bg-stone-900 text-white border-stone-900"
-                        : "bg-stone-50 text-stone-700 border-stone-300"
-                    }`}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-
-              <button
-                type="button"
-                onClick={handleRegisterExpense}
-                className="w-full py-3.5 rounded-2xl bg-stone-900 hover:bg-stone-800 text-white font-black text-sm shadow"
-              >
-                REGISTRAR COMPRA / SALIDA DE DINERO
-              </button>
-            </div>
-
-            <div className="lg:col-span-6 space-y-6">
-              <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-4">
-                <div className="flex justify-between items-center border-b pb-3">
-                  <h3 className="font-black text-base text-stone-900">
-                    Gastos Registrados
-                  </h3>
-                  <span className="text-xs font-black bg-red-100 text-red-900 px-3 py-1 rounded-xl">
-                    Total: {formatPEN(metrics.gastosTotalesCents)}
-                  </span>
-                </div>
-                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                  {expenses.map((e) => (
-                    <div
-                      key={e.id}
-                      className="p-3 rounded-xl border border-stone-200 bg-stone-50 flex justify-between items-center text-xs"
+              <div className="grid grid-cols-5 gap-2 max-h-[420px] overflow-y-auto p-1">
+                {filteredPadronTickets.map((t) => {
+                  let style = "bg-stone-50 border-stone-300 text-stone-700";
+                  if (t.deliveryStatus === "ENTREGADO") {
+                    style = "bg-stone-900 border-stone-900 text-white";
+                  } else if (t.paymentStatus === "PAGADO") {
+                    style =
+                      "bg-emerald-100 border-emerald-500 text-emerald-950 font-black";
+                  } else if (t.assignmentStatus === "RESERVADO") {
+                    style =
+                      "bg-amber-100 border-amber-500 text-amber-950 font-black";
+                  }
+                  return (
+                    <button
+                      key={t.num}
+                      onClick={() => setInspectedTicketNum(t.num)}
+                      className={`p-2 rounded-xl border-2 text-center flex flex-col items-center ${style}`}
                     >
-                      <div>
-                        <div className="font-black text-stone-900">
-                          {e.concept}
-                        </div>
-                        <div className="text-[11px] text-stone-500">
-                          {e.time} • {e.payOrigin} • Por: {e.operator}
-                        </div>
-                      </div>
-                      <strong className="text-red-700 font-black text-sm">
-                        − {formatPEN(e.amountCents)}
-                      </strong>
-                    </div>
-                  ))}
-                </div>
+                      <span className="font-mono font-black text-xs">
+                        {t.code}
+                      </span>
+                      <span className="text-[8px] font-bold truncate max-w-full">
+                        {t.buyerName ? t.buyerName.split(" ")[0] : "LIBRE"}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
+            </div>
+          )}
+        </main>
+      )}
 
-              <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-black text-sm text-stone-900">
-                    Añadir Producto Nuevo a la Barra
-                  </h3>
-                  <span className="text-[10px] font-bold bg-stone-100 px-2 py-0.5 rounded text-stone-600">
-                    🔒 Clave Maestra
+      {/* ======================================================================
+          VISTA B: PANEL DE CONTROL COMPLETO (PARA TU LAPTOP / ADMINISTRADOR)
+      ======================================================================= */}
+      {viewMode === "PANEL_COMPLETO" && (
+        <>
+          {/* BARRA DE INDICADORES RÁPIDOS (KPIs) */}
+          <section className="bg-white border-b border-stone-200 shadow-sm">
+            <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2.5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
+              <div className="p-2 rounded-xl bg-stone-50 border border-stone-200 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-stone-500 block">
+                    Tickets Libres
                   </span>
-                </div>
-                <div className="grid sm:grid-cols-3 gap-2.5">
-                  <input
-                    type="text"
-                    value={newBarName}
-                    onChange={(e) => setNewBarName(e.target.value)}
-                    placeholder="Nombre bebida"
-                    className="p-2.5 border rounded-xl text-xs font-bold"
-                  />
-                  <input
-                    type="number"
-                    step="0.50"
-                    value={newBarPriceSoles}
-                    onChange={(e) => setNewBarPriceSoles(e.target.value)}
-                    placeholder="Precio S/"
-                    className="p-2.5 border rounded-xl text-xs font-bold"
-                  />
-                  <button
-                    onClick={handleAddNewBarProduct}
-                    className="bg-orange-600 text-white font-black text-xs rounded-xl py-2.5 px-3"
-                  >
-                    + Crear Producto
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ====================================================================
-            PESTAÑA 5: VENDEDORES Y RENDICIÓN DESDE SUS TELÉFONOS
-        ===================================================================== */}
-        {activeTab === "VENDEDORES" && (
-          <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-5">
-            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-stone-200 pb-4">
-              <div>
-                <h2 className="text-xl font-black text-stone-900">
-                  Equipos de Venta por Teléfono y Rendición a Caja
-                </h2>
-                <p className="text-xs text-stone-600">
-                  Cada vendedor selecciona su nombre arriba a la derecha en su
-                  celular. Para recibirles el efectivo en Caja se requiere la
-                  Clave Maestra 🔒.
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={newSellerInput}
-                  onChange={(e) => setNewSellerInput(e.target.value)}
-                  placeholder="Nombre nuevo vendedor..."
-                  className="px-3 py-2 border rounded-xl text-xs font-bold"
-                />
-                <button
-                  onClick={handleAddSeller}
-                  className="bg-stone-900 text-white text-xs font-black px-3.5 py-2 rounded-xl"
-                >
-                  + Agregar Vendedor
-                </button>
-              </div>
-            </div>
-
-            <div className="grid md:grid-cols-2 gap-4">
-              {sellers.map((s) => {
-                const sold = tickets.filter(
-                  (t) =>
-                    t.sellerName === s.name &&
-                    t.assignmentStatus !== "DISPONIBLE"
-                );
-                const pending = Math.max(0, s.cashInHandCents - s.settledCents);
-                return (
-                  <div
-                    key={s.id}
-                    className="p-5 rounded-2xl border border-stone-200 bg-stone-50 flex flex-col justify-between gap-4"
-                  >
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="font-black text-base text-stone-900">
-                          {s.name}
-                        </h3>
-                        <p className="text-xs text-stone-600">
-                          Tickets registrados: <strong>{sold.length}</strong>
-                        </p>
-                      </div>
-                      <span
-                        className={`px-2.5 py-1 rounded-lg text-xs font-black ${
-                          pending > 0
-                            ? "bg-amber-200 text-amber-950"
-                            : "bg-emerald-100 text-emerald-900"
-                        }`}
-                      >
-                        {pending > 0
-                          ? `Debe rendir: ${formatPEN(pending)}`
-                          : "Al día ✓"}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center pt-3 border-t border-stone-200 text-xs">
-                      <span>
-                        Cobrado en móvil:{" "}
-                        <strong>{formatPEN(s.cashInHandCents)}</strong> |
-                        Entregado: <strong>{formatPEN(s.settledCents)}</strong>
-                      </span>
-                      {pending > 0 && (
-                        <button
-                          onClick={() => handleSettleSellerCash(s.id)}
-                          className="px-3.5 py-2 rounded-xl bg-emerald-700 text-white font-black shadow"
-                        >
-                          🔒 Recibir {formatPEN(pending)}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* ====================================================================
-            PESTAÑA 6: CAJA, YAPE Y GANANCIA NETA
-        ===================================================================== */}
-        {activeTab === "CAJA" && (
-          <div className="grid lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-6 bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-4">
-              <h2 className="text-xl font-black text-stone-900 border-b pb-3">
-                1. Arqueo Exacto de Efectivo en Caja
-              </h2>
-              <div className="space-y-2.5 text-sm bg-stone-50 p-4 rounded-2xl border border-stone-200">
-                <div className="flex justify-between">
-                  <span>Fondo Inicial para Vuelto:</span>
-                  <strong>{formatPEN(fondoInicialCajaCents)}</strong>
-                </div>
-                <div className="flex justify-between">
-                  <span>+ Entradas en Efectivo (Polladas/Barra/Rendiciones):</span>
-                  <strong className="text-emerald-700">
-                    + {formatPEN(metrics.entradasEfectivoCajaCents)}
+                  <strong className="text-base font-black text-stone-900">
+                    {metrics.disponibles}
                   </strong>
                 </div>
-                <div className="flex justify-between">
-                  <span>− Gastos Pagados con Efectivo de Caja:</span>
-                  <strong className="text-red-600">
-                    − {formatPEN(metrics.salidasEfectivoCajaCents)}
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-stone-200 text-stone-700">
+                  de 250
+                </span>
+              </div>
+
+              <div className="p-2 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-amber-800 block">
+                    Separados (Debe)
+                  </span>
+                  <strong className="text-base font-black text-amber-900">
+                    {metrics.separados}
                   </strong>
                 </div>
-                <div className="border-t pt-2.5 flex justify-between text-base font-black">
-                  <span>Efectivo que DEBE HABER en Caja:</span>
-                  <span className="text-blue-900">
+                <span className="text-[11px] font-extrabold text-amber-800">
+                  {formatPEN(metrics.faltaCobrarSeparadosCents)}
+                </span>
+              </div>
+
+              <div className="p-2 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-emerald-800 block">
+                    Polladas Pagadas
+                  </span>
+                  <strong className="text-base font-black text-emerald-900">
+                    {metrics.pagados}
+                  </strong>
+                </div>
+                <span className="text-[11px] font-extrabold text-emerald-800">
+                  {formatPEN(metrics.cobradoTicketsCents)}
+                </span>
+              </div>
+
+              <div className="p-2 rounded-xl bg-orange-50 border border-orange-200 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-orange-800 block">
+                    Platos en Cocina
+                  </span>
+                  <strong className="text-base font-black text-orange-900">
+                    {metrics.platosQuedan}
+                  </strong>
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-orange-200 text-orange-900">
+                  {metrics.entregados} entregados
+                </span>
+              </div>
+
+              <div className="p-2 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-blue-800 block">
+                    Efectivo en Caja
+                  </span>
+                  <strong className="text-base font-black text-blue-900">
                     {formatPEN(metrics.efectivoDisponibleCajaCents)}
-                  </span>
+                  </strong>
                 </div>
+                <span className="text-[10px] font-bold text-blue-700">
+                  Físico
+                </span>
               </div>
 
-              <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 space-y-2">
-                <label className="block text-xs font-extrabold text-stone-800">
-                  Dinero físico contado en gaveta ahora mismo (S/):
-                </label>
-                <input
-                  type="number"
-                  step="0.50"
-                  value={(conteoFisicoRealCents / 100).toFixed(2)}
-                  onChange={(e) => {
-                    const cents = Math.round(
-                      (parseFloat(e.target.value) || 0) * 100
-                    );
-                    setConteoFisicoRealCents(cents);
-                    saveToCloud({ conteoFisicoRealCents: cents });
-                  }}
-                  className="w-full p-3 rounded-xl border border-amber-400 bg-white font-black text-lg text-center"
-                />
-                <div className="flex justify-between items-center text-sm font-black pt-1">
-                  <span>Diferencia de Caja:</span>
-                  <span
-                    className={
-                      metrics.diferenciaCajaCents === 0
-                        ? "text-emerald-800"
-                        : "text-red-700"
-                    }
-                  >
-                    {formatPEN(metrics.diferenciaCajaCents)}
+              <div className="p-2 rounded-xl bg-purple-50 border border-purple-200 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-purple-800 block">
+                    Saldo Yape / Plin
                   </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="lg:col-span-6 bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-4">
-              <h2 className="text-xl font-black text-stone-900 border-b pb-3">
-                2. Rentabilidad y Dinero Digital (Yape/Plin)
-              </h2>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="p-4 rounded-2xl bg-purple-50 border border-purple-200">
-                  <span className="text-[10px] font-black uppercase text-purple-800 block">
-                    Saldo Neto en Yape / Plin
-                  </span>
-                  <strong className="text-2xl font-black text-purple-900 mt-1 block">
+                  <strong className="text-base font-black text-purple-900">
                     {formatPEN(metrics.saldoDisponibleYapeCents)}
                   </strong>
                 </div>
-                <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200">
-                  <span className="text-[10px] font-black uppercase text-amber-800 block">
-                    Por Rendir Vendedores
-                  </span>
-                  <strong className="text-2xl font-black text-amber-900 mt-1 block">
-                    {formatPEN(metrics.faltaRendirVendedoresCents)}
-                  </strong>
-                </div>
-              </div>
-
-              <div className="space-y-2.5 text-sm bg-emerald-50/70 p-4 rounded-2xl border border-emerald-200">
-                <div className="flex justify-between">
-                  <span>+ Total Cobrado en Polladas:</span>
-                  <strong className="text-emerald-800">
-                    {formatPEN(metrics.cobradoTicketsCents)}
-                  </strong>
-                </div>
-                <div className="flex justify-between">
-                  <span>+ Total Ventas de Barra:</span>
-                  <strong className="text-blue-800">
-                    {formatPEN(metrics.ingresosBarraCents)}
-                  </strong>
-                </div>
-                <div className="flex justify-between">
-                  <span>− Total Compras y Gastos:</span>
-                  <strong className="text-red-700">
-                    − {formatPEN(metrics.gastosTotalesCents)}
-                  </strong>
-                </div>
-                <div className="border-t border-emerald-300 pt-2.5 flex justify-between text-lg font-black">
-                  <span>GANANCIA NETA ACTUAL:</span>
-                  <span className="text-emerald-950">
-                    {formatPEN(metrics.gananciaNetaCents)}
-                  </span>
-                </div>
+                <span className="text-[10px] font-bold text-purple-700">
+                  Digital
+                </span>
               </div>
             </div>
-          </div>
-        )}
+          </section>
 
-        {/* ====================================================================
-            PESTAÑA 7: HISTORIAL ANTIFRAUDE INMUTABLE
-        ===================================================================== */}
-        {activeTab === "ANTIFRAUDE" && (
-          <div className="bg-white rounded-3xl shadow-sm border-2 border-stone-800 p-5 sm:p-6 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-stone-200 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-3 rounded-2xl bg-red-100 text-red-800">
-                  <ShieldAlert className="w-6 h-6" />
-                </div>
-                <div>
-                  <span className="text-[11px] font-black uppercase tracking-wider text-red-700">
-                    Auditoría Inmutable en Tiempo Real
-                  </span>
-                  <h2 className="text-xl font-black text-stone-900">
-                    Historial Antifraude de Todos los Movimientos
-                  </h2>
-                  <p className="text-xs text-stone-600">
-                    Registra quién vendió, quién cobró, qué teléfono usó,
-                    intentos de doble recojo y anulaciones.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  type="text"
-                  value={auditSearch}
-                  onChange={(e) => setAuditSearch(e.target.value)}
-                  placeholder="Buscar vendedor, ticket o cliente..."
-                  className="px-3 py-2 border rounded-xl text-xs font-bold"
-                />
-                <select
-                  value={auditFilter}
-                  onChange={(e) => setAuditFilter(e.target.value)}
-                  className="px-3 py-2 border rounded-xl text-xs font-black bg-stone-50"
-                >
-                  <option value="TODOS">Todos los Movimientos</option>
-                  <option value="ALERTA">
-                    🚨 Solo Alertas / Anulaciones / Críticos
-                  </option>
-                  <option value="VENTA">💵 Ventas y Cobros</option>
-                  <option value="DESPACHO">🍗 Entregas de Cocina</option>
-                  <option value="GASTO">🍾 Barra y Gastos</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="space-y-2 max-h-[520px] overflow-y-auto pr-1 font-mono">
-              {filteredAuditLogs.map((l) => {
-                let boxStyle = "bg-stone-50 border-stone-200 text-stone-800";
-                let badgeStyle = "bg-stone-200 text-stone-800";
-                if (l.severity === "CRITICAL") {
-                  boxStyle = "bg-red-50 border-red-400 text-red-950";
-                  badgeStyle = "bg-red-700 text-white";
-                } else if (l.severity === "WARNING") {
-                  boxStyle = "bg-amber-50 border-amber-400 text-amber-950";
-                  badgeStyle = "bg-amber-600 text-white";
-                }
-
-                return (
-                  <div
-                    key={l.id}
-                    className={`p-3.5 rounded-2xl border ${boxStyle} flex flex-wrap justify-between items-start gap-2 text-xs`}
-                  >
-                    <div className="space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span
-                          className={`px-2 py-0.5 rounded font-black text-[10px] uppercase ${badgeStyle}`}
-                        >
-                          {l.category}
-                        </span>
-                        <strong className="font-black text-sm">{l.title}</strong>
-                      </div>
-                      <p className="text-xs opacity-90">{l.detail}</p>
+          <main className="max-w-7xl mx-auto px-3 sm:px-6 py-5">
+            {/* ================================================================
+                PESTAÑA 1: VENDER POLLADA Y BARRA
+            ================================================================= */}
+            {activeTab === "VENDER" && (
+              <div className="grid lg:grid-cols-12 gap-6">
+                {/* Venta de Pollada (7 cols) */}
+                <div className="lg:col-span-7 bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-200 pb-4">
+                    <div>
+                      <span className="text-[11px] font-black uppercase tracking-wider text-orange-600">
+                        JCR EVENTOS • Punto de Venta Principal
+                      </span>
+                      <h2 className="text-xl font-black text-stone-900">
+                        1. Vender o Separar Pollada (
+                        {formatPEN(eventConfig.unitPriceCents)})
+                      </h2>
                     </div>
-                    <div className="text-right text-[11px] font-bold shrink-0">
-                      <div>🕒 {l.time}</div>
-                      <div className="text-orange-800">
-                        👤 {l.operator} ({l.device})
-                      </div>
+                    <button
+                      onClick={() => {
+                        const free = tickets.find(
+                          (t) => t.assignmentStatus === "DISPONIBLE"
+                        );
+                        if (free) setPosTicketNums(String(free.num));
+                      }}
+                      className="text-xs font-black bg-orange-100 hover:bg-orange-200 text-orange-900 px-3 py-2 rounded-xl"
+                    >
+                      ⚡ Buscar N.º Libre
+                    </button>
+                  </div>
+
+                  <div className="grid sm:grid-cols-12 gap-4">
+                    <div className="sm:col-span-4">
+                      <label className="block text-xs font-extrabold text-stone-700 mb-1">
+                        N.º Ticket (1 al 250)
+                      </label>
+                      <input
+                        type="text"
+                        value={posTicketNums}
+                        onChange={(e) => setPosTicketNums(e.target.value)}
+                        placeholder="Ej: 12 o 12,13"
+                        className="w-full p-3 border-2 border-orange-500 rounded-2xl font-mono font-black text-xl text-center bg-orange-50/40"
+                      />
+                    </div>
+                    <div className="sm:col-span-8">
+                      <label className="block text-xs font-extrabold text-stone-700 mb-1">
+                        Nombre del Cliente / Comprador
+                      </label>
+                      <input
+                        type="text"
+                        value={posBuyerName}
+                        onChange={(e) => setPosBuyerName(e.target.value)}
+                        placeholder="Ej. Familia Rojas / Juan Pérez"
+                        className="w-full p-3 border border-stone-300 rounded-2xl text-sm font-bold"
+                      />
+                      <span className="block text-[11px] text-stone-500 mt-1">
+                        Para varios tickets sepáralos con coma (ej: 15, 16, 17).
+                      </span>
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
 
-        {/* ====================================================================
-            PESTAÑA 8: CONFIGURACIÓN MAESTRA DEL NEGOCIO
-        ===================================================================== */}
-        {activeTab === "CONFIG" && (
-          <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-5">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
-              <div>
-                <h2 className="text-xl font-black text-stone-900">
-                  Configuración Maestra del Negocio (Huánuco)
-                </h2>
-                <p className="text-xs text-stone-600">
-                  Protegido con Clave Maestra para que ningún vendedor altere
-                  precios ni cantidades por error.
-                </p>
-              </div>
-              <span
-                className={`px-3 py-1.5 rounded-xl text-xs font-black ${
-                  isMasterUnlocked
-                    ? "bg-emerald-100 text-emerald-900"
-                    : "bg-red-100 text-red-900"
-                }`}
-              >
-                {isMasterUnlocked
-                  ? "🔓 MODO ADMINISTRADOR ACTIVO"
-                  : "🔒 BLOQUEADO (Toca Clave Maestra arriba)"}
-              </span>
-            </div>
+                  <div className="grid sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-xs font-extrabold text-stone-700 mb-1">
+                        Celular WhatsApp
+                      </label>
+                      <input
+                        type="tel"
+                        value={posBuyerPhone}
+                        onChange={(e) => setPosBuyerPhone(e.target.value)}
+                        placeholder="Ej. 962123456"
+                        className="w-full p-2.5 border border-stone-300 rounded-xl text-sm font-semibold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-extrabold text-stone-700 mb-1">
+                        Vendedor Responsable
+                      </label>
+                      <select
+                        value={posSellerName}
+                        onChange={(e) => setPosSellerName(e.target.value)}
+                        className="w-full p-2.5 border border-stone-300 rounded-xl text-sm font-bold bg-white"
+                      >
+                        {sellers.map((s) => (
+                          <option key={s.id} value={s.name}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-extrabold text-stone-700 mb-1">
+                        Modalidad Despacho
+                      </label>
+                      <select
+                        value={posServiceType}
+                        onChange={(e) => setPosServiceType(e.target.value)}
+                        className="w-full p-2.5 border border-stone-300 rounded-xl text-sm font-bold bg-white"
+                      >
+                        <option value="MESA_LOCAL">Comer en el Local</option>
+                        <option value="PARA_LLEVAR">Para Llevar</option>
+                        <option value="DELIVERY_HUANUCO">
+                          Delivery Huánuco
+                        </option>
+                      </select>
+                    </div>
+                  </div>
 
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-xs font-extrabold text-stone-700 mb-1">
-                  Nombre de la Pollería / Evento
-                </label>
-                <input
-                  type="text"
-                  value={eventConfig.name}
-                  onChange={(e) => {
-                    if (!requireMasterAuth("Editar Nombre")) return;
-                    const next = { ...eventConfig, name: e.target.value };
-                    setEventConfig(next);
-                    saveToCloud({ eventConfig: next });
-                  }}
-                  className="w-full p-3 border rounded-xl text-sm font-bold"
-                />
-              </div>
+                  <div>
+                    <label className="block text-xs font-extrabold text-stone-700 mb-1.5">
+                      ¿Cómo se paga esta pollada?
+                    </label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {[
+                        {
+                          id: "EFECTIVO_CAJA",
+                          title: "💵 Efectivo Caja",
+                          sub: "Directo a gaveta",
+                        },
+                        {
+                          id: "YAPE_EVENTO",
+                          title: "📱 Yape / Plin",
+                          sub: "Cuenta digital",
+                        },
+                        {
+                          id: "EFECTIVO_VENDEDOR",
+                          title: "👤 Cobró Vendedor",
+                          sub: "Queda por rendir",
+                        },
+                        {
+                          id: "SOLO_SEPARAR",
+                          title: "⏳ Solo Separar",
+                          sub: "Paga al recoger",
+                        },
+                      ].map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => setPosPayMode(m.id)}
+                          className={`p-3 rounded-2xl border-2 text-left transition ${
+                            posPayMode === m.id
+                              ? "bg-stone-900 text-white border-orange-500 shadow"
+                              : "bg-stone-50 text-stone-800 border-stone-200 hover:bg-stone-100"
+                          }`}
+                        >
+                          <span className="block text-xs font-black">
+                            {m.title}
+                          </span>
+                          <span className="block text-[10px] opacity-80 mt-0.5">
+                            {m.sub}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
-              <div>
-                <label className="block text-xs font-extrabold text-stone-700 mb-1">
-                  Dirección en Huánuco
-                </label>
-                <input
-                  type="text"
-                  value={eventConfig.address}
-                  onChange={(e) => {
-                    if (!requireMasterAuth("Editar Dirección")) return;
-                    const next = { ...eventConfig, address: e.target.value };
-                    setEventConfig(next);
-                    saveToCloud({ eventConfig: next });
-                  }}
-                  className="w-full p-3 border rounded-xl text-sm font-bold"
-                />
-              </div>
+                  {posPayMode === "EFECTIVO_CAJA" && (
+                    <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 flex flex-wrap items-center justify-between gap-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-extrabold text-stone-800">
+                          Billete recibido S/:
+                        </span>
+                        <input
+                          type="number"
+                          value={posBilleteSoles}
+                          onChange={(e) => setPosBilleteSoles(e.target.value)}
+                          className="w-24 p-2 rounded-xl border border-amber-400 font-black text-center text-base bg-white"
+                        />
+                        <div className="flex gap-1">
+                          {[20, 50, 100].map((b) => (
+                            <button
+                              key={b}
+                              type="button"
+                              onClick={() => setPosBilleteSoles(String(b))}
+                              className="px-2.5 py-1.5 rounded-lg bg-white border border-amber-300 text-xs font-black"
+                            >
+                              S/ {b}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-xs font-bold text-stone-600 block">
+                          Total a cobrar:{" "}
+                          <strong>{formatPEN(posTotalCobrarCents)}</strong>
+                        </span>
+                        <span className="text-xs font-extrabold text-orange-900">
+                          Vuelto a entregar:{" "}
+                          <strong className="text-lg font-black">
+                            {formatPEN(posVueltoCents)}
+                          </strong>
+                        </span>
+                      </div>
+                    </div>
+                  )}
 
-              <div>
-                <label className="block text-xs font-extrabold text-stone-700 mb-1">
-                  Precio por Pollada (S/)
-                </label>
-                <input
-                  type="number"
-                  step="0.50"
-                  value={(eventConfig.unitPriceCents / 100).toFixed(2)}
-                  onChange={(e) => {
-                    if (!requireMasterAuth("Cambiar Precio")) return;
-                    const cents = Math.round(
-                      (parseFloat(e.target.value) || 15) * 100
-                    );
-                    const nextCfg = { ...eventConfig, unitPriceCents: cents };
-                    const nextT = tickets.map((t) =>
-                      t.assignmentStatus === "DISPONIBLE"
-                        ? { ...t, agreedPriceCents: cents }
-                        : t
-                    );
-                    setEventConfig(nextCfg);
-                    setTickets(nextT);
-                    saveToCloud({ eventConfig: nextCfg, tickets: nextT });
-                  }}
-                  className="w-full p-3 border rounded-xl text-sm font-black"
-                />
-              </div>
+                  {posPayMode === "YAPE_EVENTO" && (
+                    <div className="p-4 rounded-2xl bg-purple-50 border border-purple-200">
+                      <label className="block text-xs font-extrabold text-purple-900 mb-1">
+                        N.º Operación / Titular Yape (Verificación Antifraude)
+                      </label>
+                      <input
+                        type="text"
+                        value={posYapeRef}
+                        onChange={(e) => setPosYapeRef(e.target.value)}
+                        placeholder="Ej. Op. 394810 - Yapeó María"
+                        className="w-full p-2.5 rounded-xl border border-purple-300 text-xs font-bold bg-white"
+                      />
+                    </div>
+                  )}
 
-              <div>
-                <label className="block text-xs font-extrabold text-stone-700 mb-1">
-                  Platos / Pollos en Cocina
-                </label>
-                <input
-                  type="number"
-                  value={pollosRecibidos}
-                  onChange={(e) => {
-                    if (!requireMasterAuth("Cambiar Stock Cocina")) return;
-                    const val = parseInt(e.target.value || "250", 10) || 250;
-                    setPollosRecibidos(val);
-                    saveToCloud({ pollosRecibidos: val });
-                  }}
-                  className="w-full p-3 border rounded-xl text-sm font-black"
-                />
-              </div>
+                  {posPayMode !== "SOLO_SEPARAR" && (
+                    <label className="flex items-center gap-2.5 p-3.5 rounded-2xl bg-stone-100 border border-stone-200 cursor-pointer text-xs sm:text-sm font-extrabold text-stone-800">
+                      <input
+                        type="checkbox"
+                        checked={posDeliverNow}
+                        onChange={(e) => setPosDeliverNow(e.target.checked)}
+                        className="w-5 h-5 accent-orange-600 rounded"
+                      />
+                      <span>
+                        Entregar el plato en este instante (Descontar de Cocina
+                        y marcar ENTREGADO)
+                      </span>
+                    </label>
+                  )}
 
-              <div>
-                <label className="block text-xs font-extrabold text-stone-700 mb-1">
-                  Fondo Inicial de Caja (S/)
-                </label>
-                <input
-                  type="number"
-                  value={(fondoInicialCajaCents / 100).toFixed(2)}
-                  onChange={(e) => {
-                    if (!requireMasterAuth("Cambiar Fondo de Caja")) return;
-                    const cents = Math.round(
-                      (parseFloat(e.target.value) || 0) * 100
-                    );
-                    setFondoInicialCajaCents(cents);
-                    saveToCloud({ fondoInicialCajaCents: cents });
-                  }}
-                  className="w-full p-3 border rounded-xl text-sm font-black"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-extrabold text-stone-700 mb-1">
-                  Cambiar Clave Maestra (Actual: {isMasterUnlocked ? masterPin : "••••"})
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    type="password"
-                    value={newMasterPinInput}
-                    onChange={(e) => setNewMasterPinInput(e.target.value)}
-                    placeholder="Nuevo PIN..."
-                    className="w-full p-3 border rounded-xl text-sm font-bold"
-                  />
                   <button
-                    onClick={() => {
-                      if (!requireMasterAuth("Cambiar Clave Maestra")) return;
-                      if (newMasterPinInput.trim().length < 4) {
-                        notify(
-                          "La nueva Clave Maestra debe tener al menos 4 dígitos.",
-                          "warning"
-                        );
-                        return;
-                      }
-                      const nextPin = newMasterPinInput.trim();
-                      setMasterPin(nextPin);
-                      setNewMasterPinInput("");
-                      saveToCloud({ masterPin: nextPin });
-                      notify("Clave Maestra actualizada con éxito.", "success");
-                    }}
-                    className="px-4 rounded-xl bg-stone-900 text-white text-xs font-black"
+                    type="button"
+                    onClick={handleSellOrReserveTickets}
+                    className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white font-black text-base shadow-lg transition"
                   >
-                    Guardar PIN
+                    {posPayMode === "SOLO_SEPARAR"
+                      ? `SEPARAR ${
+                          parsedPosNums.length || 1
+                        } TICKET(S) — FALTA PAGAR ${formatPEN(
+                          posTotalCobrarCents
+                        )}`
+                      : `GUARDAR VENTA (${
+                          parsedPosNums.length || 1
+                        } TICKET • ${formatPEN(posTotalCobrarCents)})`}
+                  </button>
+                </div>
+
+                {/* Venta Rápida de Barra (5 cols) */}
+                <div className="lg:col-span-5 bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 flex flex-col justify-between space-y-4">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between border-b border-stone-200 pb-4">
+                      <div>
+                        <span className="text-[11px] font-black uppercase tracking-wider text-emerald-700">
+                          Cantina / Bebidas JCR EVENTOS
+                        </span>
+                        <h2 className="text-xl font-black text-stone-900">
+                          2. Venta Rápida de Barra
+                        </h2>
+                      </div>
+                      <span className="text-xs font-black bg-emerald-100 text-emerald-900 px-3 py-1.5 rounded-xl">
+                        Barra: {formatPEN(metrics.ingresosBarraCents)}
+                      </span>
+                    </div>
+
+                    <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
+                      {barItems.map((item) => (
+                        <div
+                          key={item.id}
+                          className="p-3.5 rounded-2xl border border-stone-200 bg-stone-50 flex flex-wrap items-center justify-between gap-2"
+                        >
+                          <div>
+                            <div className="font-black text-sm text-stone-900">
+                              {item.name} —{" "}
+                              <span className="text-orange-700">
+                                {formatPEN(item.unitPriceCents)}
+                              </span>
+                            </div>
+                            <div className="text-xs text-stone-600 mt-0.5">
+                              Stock:{" "}
+                              <strong
+                                className={
+                                  item.stock > 0
+                                    ? "text-emerald-700"
+                                    : "text-red-600"
+                                }
+                              >
+                                {item.stock} und.
+                              </strong>{" "}
+                              • Vendidos: <strong>{item.soldQty}</strong>
+                            </div>
+                          </div>
+                          <div className="flex gap-1.5">
+                            <button
+                              onClick={() =>
+                                handleSellBarItem(item.id, "EFECTIVO_CAJA")
+                              }
+                              className="px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-black shadow-sm"
+                            >
+                              +1 Efectivo
+                            </button>
+                            <button
+                              onClick={() =>
+                                handleSellBarItem(item.id, "YAPE_EVENTO")
+                              }
+                              className="px-3 py-2 rounded-xl bg-purple-700 hover:bg-purple-800 text-white text-xs font-black shadow-sm"
+                            >
+                              +1 Yape
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => setActiveTab("GASTOS")}
+                    className="w-full py-2.5 px-3 rounded-xl border border-orange-300 bg-orange-50 text-orange-900 text-xs font-black hover:bg-orange-100"
+                  >
+                    + Abastecer Stock o Registrar Gasto de Fiesta →
                   </button>
                 </div>
               </div>
-            </div>
-          </div>
-        )}
-      </main>
+            )}
+
+            {/* ================================================================
+                PESTAÑA 2: PADRÓN DE 250 TICKETS + DETALLE QR Y ANULACIÓN
+            ================================================================= */}
+            {activeTab === "PADRON" && (
+              <div className="space-y-6">
+                <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-4 border-b border-stone-200 pb-4">
+                    <div>
+                      <h2 className="text-xl font-black text-stone-900">
+                        Padrón Oficial de 250 Tickets (001 al 250)
+                      </h2>
+                      <p className="text-xs text-stone-600">
+                        Se actualiza en vivo conforme tus vendedores venden
+                        desde sus celulares.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="text"
+                        value={padronSearch}
+                        onChange={(e) => setPadronSearch(e.target.value)}
+                        placeholder="Buscar N.º, cliente o vendedor..."
+                        className="px-3.5 py-2 rounded-xl border border-stone-300 text-xs font-bold w-56"
+                      />
+                      <select
+                        value={padronFilter}
+                        onChange={(e) => setPadronFilter(e.target.value)}
+                        className="px-3.5 py-2 rounded-xl border border-stone-300 text-xs font-black bg-stone-50"
+                      >
+                        <option value="TODOS">Todos los 250 Tickets</option>
+                        <option value="DISPONIBLE">
+                          🟢 Libres ({metrics.disponibles})
+                        </option>
+                        <option value="FALTA_PAGAR">
+                          🟡 Separados - Falta Pagar ({metrics.separados})
+                        </option>
+                        <option value="PAGADO">
+                          💵 Pagados ({metrics.pagados})
+                        </option>
+                        <option value="FALTA_ENTREGAR">
+                          🍗 Pagados por Recoger Plato
+                        </option>
+                        <option value="ENTREGADO">
+                          ⬛ Ya Entregados ({metrics.entregados})
+                        </option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-5 sm:grid-cols-10 gap-2 max-h-[500px] overflow-y-auto p-1">
+                    {filteredPadronTickets.map((t) => {
+                      let style =
+                        "bg-stone-50 border-stone-300 text-stone-700 hover:border-orange-500";
+                      let tag = "LIBRE";
+                      if (t.deliveryStatus === "ENTREGADO") {
+                        style = "bg-stone-900 border-stone-900 text-white";
+                        tag = "ENTREGADO";
+                      } else if (t.paymentStatus === "PAGADO") {
+                        style =
+                          "bg-emerald-100 border-emerald-500 text-emerald-950 font-black";
+                        tag = "PAGADO";
+                      } else if (t.assignmentStatus === "RESERVADO") {
+                        style =
+                          "bg-amber-100 border-amber-500 text-amber-950 font-black";
+                        tag = "DEBE";
+                      }
+
+                      return (
+                        <button
+                          key={t.num}
+                          onClick={() => setInspectedTicketNum(t.num)}
+                          className={`p-2 rounded-xl border-2 text-center flex flex-col items-center justify-center transition transform hover:scale-105 ${style}`}
+                        >
+                          <span className="font-mono font-black text-xs sm:text-sm">
+                            {t.code}
+                          </span>
+                          <span className="text-[8px] font-black tracking-tighter mt-0.5 truncate max-w-full">
+                            {t.buyerName ? t.buyerName.split(" ")[0] : tag}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {inspectedTicket && (
+                  <div className="bg-white rounded-3xl shadow-xl border-2 border-orange-500 p-5 sm:p-6 space-y-4">
+                    <div className="flex flex-wrap justify-between items-start gap-4 border-b border-stone-200 pb-4">
+                      <div>
+                        <span className="text-xs font-black uppercase text-orange-600">
+                          Inspector Antifraude JCR EVENTOS • Ticket N.º{" "}
+                          {inspectedTicket.code}
+                        </span>
+                        <h3 className="text-2xl font-black text-stone-900 mt-0.5">
+                          {inspectedTicket.buyerName ||
+                            "Ticket Libre (Disponible)"}
+                        </h3>
+                        <p className="text-xs text-stone-600 font-semibold">
+                          Vendedor: <strong>{inspectedTicket.sellerName}</strong>{" "}
+                          • Modalidad:{" "}
+                          <strong>{inspectedTicket.serviceType}</strong>
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setInspectedTicketNum(null)}
+                        className="px-3 py-1.5 rounded-xl bg-stone-200 text-stone-800 text-xs font-black"
+                      >
+                        Cerrar ✕
+                      </button>
+                    </div>
+
+                    <div className="grid md:grid-cols-3 gap-5 items-center">
+                      <div className="p-4 rounded-2xl bg-stone-900 text-white text-center space-y-2">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-amber-400 block">
+                          Token Único Antifraude
+                        </span>
+                        <div className="font-mono font-black text-base tracking-wider bg-white/10 py-2 px-3 rounded-xl border border-white/15">
+                          {inspectedTicket.qrToken}
+                        </div>
+                        <span className="text-[11px] text-stone-300 block">
+                          {inspectedTicket.deliveredAt
+                            ? `Entregado a las ${inspectedTicket.deliveredAt} por ${inspectedTicket.deliveredBy}`
+                            : "Plato aún en cocina"}
+                        </span>
+                      </div>
+
+                      <div className="md:col-span-2 flex flex-wrap gap-2.5">
+                        {inspectedTicket.assignmentStatus === "DISPONIBLE" && (
+                          <button
+                            onClick={() => {
+                              setPosTicketNums(String(inspectedTicket.num));
+                              setActiveTab("VENDER");
+                            }}
+                            className="px-5 py-3 rounded-2xl bg-orange-600 text-white text-xs font-black shadow"
+                          >
+                            🎟️ Vender o Separar este Ticket (#
+                            {inspectedTicket.code})
+                          </button>
+                        )}
+
+                        {inspectedTicket.assignmentStatus !== "DISPONIBLE" &&
+                          inspectedTicket.paymentStatus !== "PAGADO" && (
+                            <>
+                              <button
+                                onClick={() =>
+                                  handlePayReservedTicket(
+                                    inspectedTicket.num,
+                                    "EFECTIVO_CAJA"
+                                  )
+                                }
+                                className="px-4 py-3 rounded-2xl bg-emerald-700 text-white text-xs font-black shadow"
+                              >
+                                💵 Cobrar Efectivo (
+                                {formatPEN(inspectedTicket.agreedPriceCents)})
+                              </button>
+                              <button
+                                onClick={() =>
+                                  handlePayReservedTicket(
+                                    inspectedTicket.num,
+                                    "YAPE_EVENTO"
+                                  )
+                                }
+                                className="px-4 py-3 rounded-2xl bg-purple-700 text-white text-xs font-black shadow"
+                              >
+                                📱 Cobrar Yape (
+                                {formatPEN(inspectedTicket.agreedPriceCents)})
+                              </button>
+                            </>
+                          )}
+
+                        {inspectedTicket.paymentStatus === "PAGADO" &&
+                          inspectedTicket.deliveryStatus !== "ENTREGADO" && (
+                            <button
+                              onClick={() =>
+                                handleDeliverPlate(inspectedTicket.num)
+                              }
+                              className="px-5 py-3 rounded-2xl bg-stone-900 text-white text-xs font-black shadow"
+                            >
+                              🍗 Despachar y Entregar Plato Ahora
+                            </button>
+                          )}
+
+                        {inspectedTicket.assignmentStatus !== "DISPONIBLE" && (
+                          <>
+                            <a
+                              href={`https://wa.me/${(
+                                inspectedTicket.buyerPhone || ""
+                              ).replace(/\D/g, "")}?text=${encodeURIComponent(
+                                `🍗 *JCR EVENTOS - ${eventConfig.name.toUpperCase()}*\n🎟️ Ticket Oficial N.º *${
+                                  inspectedTicket.code
+                                }*\n👤 Cliente: ${
+                                  inspectedTicket.buyerName
+                                }\n💳 Estado: *${
+                                  inspectedTicket.paymentStatus
+                                }*\n🔐 Token QR Antifraude: ${
+                                  inspectedTicket.qrToken
+                                }\n📍 Dirección: ${eventConfig.address}`
+                              )}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="px-4 py-3 rounded-2xl bg-emerald-600 text-white text-xs font-black shadow"
+                            >
+                              📲 Enviar Ticket por WhatsApp
+                            </a>
+                            <button
+                              onClick={() =>
+                                handleVoidTicket(inspectedTicket.num)
+                              }
+                              className="px-4 py-3 rounded-2xl bg-red-100 hover:bg-red-200 text-red-900 text-xs font-black"
+                            >
+                              🔒 Anular / Liberar Ticket (Clave Maestra)
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ================================================================
+                PESTAÑA 3: COCINA Y DESPACHO DE PLATOS
+            ================================================================= */}
+            {activeTab === "DESPACHO" && (
+              <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-stone-200 pb-4">
+                  <div>
+                    <span className="text-[11px] font-black uppercase tracking-wider text-orange-600">
+                      Control de Cocina JCR EVENTOS
+                    </span>
+                    <h2 className="text-xl font-black text-stone-900">
+                      Despacho de Platos y Verificador Anti-Doble Entrega
+                    </h2>
+                    <p className="text-xs text-stone-600">
+                      Si alguien intenta recoger dos veces con el mismo ticket,
+                      saltará una alerta roja en el Historial Antifraude.
+                    </p>
+                  </div>
+                  <div className="bg-orange-50 border border-orange-200 px-4 py-2.5 rounded-2xl">
+                    <span className="text-[10px] font-bold uppercase text-orange-800 block">
+                      Platos Físicos Disponibles
+                    </span>
+                    <strong className="text-2xl font-black text-orange-900">
+                      {metrics.platosQuedan}
+                    </strong>
+                  </div>
+                </div>
+
+                <div className="relative">
+                  <Search className="w-5 h-5 text-stone-400 absolute left-4 top-4" />
+                  <input
+                    type="text"
+                    value={despachoSearch}
+                    onChange={(e) => setDespachoSearch(e.target.value)}
+                    placeholder="Busca por N.º de Ticket (ej. 045), nombre del cliente o token QR..."
+                    className="w-full p-4 pl-12 rounded-2xl border-2 border-stone-300 focus:border-orange-500 focus:outline-none text-sm sm:text-base font-extrabold"
+                  />
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-3">
+                  {filteredDespachoTickets.map((t) => {
+                    const isDelivered = t.deliveryStatus === "ENTREGADO";
+                    const isPaid = t.paymentStatus === "PAGADO";
+                    return (
+                      <div
+                        key={t.num}
+                        className={`p-4 rounded-2xl border-2 flex flex-wrap items-center justify-between gap-3 ${
+                          isDelivered
+                            ? "bg-red-50 border-red-400"
+                            : isPaid
+                            ? "bg-emerald-50 border-emerald-500"
+                            : "bg-amber-50 border-amber-400"
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-black text-lg text-stone-900">
+                              #{t.code}
+                            </span>
+                            <span
+                              className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
+                                isPaid
+                                  ? "bg-emerald-200 text-emerald-950"
+                                  : "bg-amber-300 text-amber-950"
+                              }`}
+                            >
+                              {t.paymentStatus}
+                            </span>
+                            <span className="text-[10px] font-bold text-stone-600">
+                              {t.serviceType}
+                            </span>
+                          </div>
+                          <p className="font-black text-sm text-stone-900 mt-0.5">
+                            {t.buyerName || "Cliente"}
+                          </p>
+                          <p className="text-[11px] font-mono text-stone-500">
+                            {t.qrToken}{" "}
+                            {isDelivered
+                              ? `• ⚠️ ENTREGADO (${t.deliveredAt})`
+                              : ""}
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          {!isPaid && (
+                            <button
+                              onClick={() =>
+                                handlePayReservedTicket(t.num, "EFECTIVO_CAJA")
+                              }
+                              className="px-3 py-2.5 rounded-xl bg-amber-600 text-white text-xs font-black"
+                            >
+                              Cobrar {formatPEN(t.agreedPriceCents)}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDeliverPlate(t.num)}
+                            className={`px-4 py-2.5 rounded-xl text-xs font-black shadow ${
+                              isDelivered
+                                ? "bg-red-700 text-white"
+                                : "bg-stone-900 text-white hover:bg-stone-800"
+                            }`}
+                          >
+                            {isDelivered
+                              ? "🚨 Verificar Alerta"
+                              : "🍗 Entregar Plato"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ================================================================
+                PESTAÑA 4: FIESTA, STOCK DE BARRA Y GASTOS
+            ================================================================= */}
+            {activeTab === "GASTOS" && (
+              <div className="grid lg:grid-cols-12 gap-6">
+                <div className="lg:col-span-6 bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-4">
+                  <h2 className="text-xl font-black text-stone-900 border-b pb-3">
+                    Registrar Compra de Barra o Gasto del Local
+                  </h2>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: "COMPRA_BARRA", label: "🍾 Abastecer Barra" },
+                      { id: "PAGO_POLLOS", label: "🍗 Pollos / Carbón" },
+                      { id: "GASTO_FIESTA", label: "🎵 Orquesta / Local" },
+                    ].map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => setExpCategory(c.id)}
+                        className={`p-3 rounded-2xl border text-xs font-black ${
+                          expCategory === c.id
+                            ? "bg-orange-600 text-white border-orange-600"
+                            : "bg-stone-50 text-stone-700 border-stone-300"
+                        }`}
+                      >
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {expCategory === "COMPRA_BARRA" && (
+                    <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 grid sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-extrabold text-emerald-900 mb-1">
+                          Producto a recargar
+                        </label>
+                        <select
+                          value={expBarProductId}
+                          onChange={(e) => setExpBarProductId(e.target.value)}
+                          className="w-full p-2.5 rounded-xl border border-emerald-300 bg-white text-xs font-black"
+                        >
+                          {barItems.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name} (Stock: {b.stock})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-extrabold text-emerald-900 mb-1">
+                          Unidades que ingresan (+Stock)
+                        </label>
+                        <input
+                          type="number"
+                          value={expBarUnits}
+                          onChange={(e) => setExpBarUnits(e.target.value)}
+                          className="w-full p-2.5 rounded-xl border border-emerald-300 bg-white text-sm font-black text-center"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid sm:grid-cols-3 gap-3">
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-extrabold text-stone-700 mb-1">
+                        Concepto / Detalle
+                      </label>
+                      <input
+                        type="text"
+                        value={expConcept}
+                        onChange={(e) => setExpConcept(e.target.value)}
+                        placeholder="Ej. 2 cajas de cerveza / Pago DJ"
+                        className="w-full p-3 border border-stone-300 rounded-xl text-sm font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-extrabold text-stone-700 mb-1">
+                        Monto S/
+                      </label>
+                      <input
+                        type="number"
+                        step="0.50"
+                        value={expAmountSoles}
+                        onChange={(e) => setExpAmountSoles(e.target.value)}
+                        placeholder="0.00"
+                        className="w-full p-3 border border-stone-300 rounded-xl text-base font-black text-center"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: "EFECTIVO_CAJA", label: "💵 Sale de Caja" },
+                      { id: "YAPE_EVENTO", label: "📱 Sale de Yape" },
+                      { id: "POR_PAGAR", label: "📝 Por Pagar" },
+                    ].map((o) => (
+                      <button
+                        key={o.id}
+                        type="button"
+                        onClick={() => setExpOrigin(o.id)}
+                        className={`p-2.5 rounded-xl border text-xs font-black ${
+                          expOrigin === o.id
+                            ? "bg-stone-900 text-white border-stone-900"
+                            : "bg-stone-50 text-stone-700 border-stone-300"
+                        }`}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleRegisterExpense}
+                    className="w-full py-3.5 rounded-2xl bg-stone-900 hover:bg-stone-800 text-white font-black text-sm shadow"
+                  >
+                    REGISTRAR COMPRA / SALIDA DE DINERO
+                  </button>
+                </div>
+
+                <div className="lg:col-span-6 space-y-6">
+                  <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-4">
+                    <div className="flex justify-between items-center border-b pb-3">
+                      <h3 className="font-black text-base text-stone-900">
+                        Gastos Registrados
+                      </h3>
+                      <span className="text-xs font-black bg-red-100 text-red-900 px-3 py-1 rounded-xl">
+                        Total: {formatPEN(metrics.gastosTotalesCents)}
+                      </span>
+                    </div>
+                    <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                      {expenses.map((e) => (
+                        <div
+                          key={e.id}
+                          className="p-3 rounded-xl border border-stone-200 bg-stone-50 flex justify-between items-center text-xs"
+                        >
+                          <div>
+                            <div className="font-black text-stone-900">
+                              {e.concept}
+                            </div>
+                            <div className="text-[11px] text-stone-500">
+                              {e.time} • {e.payOrigin} • Por: {e.operator}
+                            </div>
+                          </div>
+                          <strong className="text-red-700 font-black text-sm">
+                            − {formatPEN(e.amountCents)}
+                          </strong>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-black text-sm text-stone-900">
+                        Añadir Producto Nuevo a la Barra
+                      </h3>
+                      <span className="text-[10px] font-bold bg-stone-100 px-2 py-0.5 rounded text-stone-600">
+                        🔒 Clave Maestra
+                      </span>
+                    </div>
+                    <div className="grid sm:grid-cols-3 gap-2.5">
+                      <input
+                        type="text"
+                        value={newBarName}
+                        onChange={(e) => setNewBarName(e.target.value)}
+                        placeholder="Nombre bebida"
+                        className="p-2.5 border rounded-xl text-xs font-bold"
+                      />
+                      <input
+                        type="number"
+                        step="0.50"
+                        value={newBarPriceSoles}
+                        onChange={(e) => setNewBarPriceSoles(e.target.value)}
+                        placeholder="Precio S/"
+                        className="p-2.5 border rounded-xl text-xs font-bold"
+                      />
+                      <button
+                        onClick={handleAddNewBarProduct}
+                        className="bg-orange-600 text-white font-black text-xs rounded-xl py-2.5 px-3"
+                      >
+                        + Crear Producto
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ================================================================
+                PESTAÑA 5: VENDEDORES, GUARDADO EN FIREBASE Y LINK EXCLUSIVO CELULAR
+            ================================================================= */}
+            {activeTab === "VENDEDORES" && (
+              <div className="space-y-6">
+                {/* Panel para Agregar Vendedor a Firebase */}
+                <div className="bg-white rounded-3xl shadow-sm border-2 border-orange-500/40 p-5 sm:p-6 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-4 border-b border-stone-200 pb-4">
+                    <div>
+                      <span className="text-[11px] font-black uppercase tracking-wider text-orange-600">
+                        Sincronizado en Vivo con Firebase
+                      </span>
+                      <h2 className="text-xl font-black text-stone-900">
+                        1. Agregar Vendedor y Generar Link Exclusivo para su
+                        Celular
+                      </h2>
+                      <p className="text-xs text-stone-600">
+                        Agrega a tus vendedores aquí y envíales su{" "}
+                        <strong>Link Exclusivo de Venta</strong> por WhatsApp.
+                        Cuando lo abran en su celular, solo podrán vender
+                        tickets sin tocar tu panel de control.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid sm:grid-cols-12 gap-3 items-end">
+                    <div className="sm:col-span-5">
+                      <label className="block text-xs font-extrabold text-stone-700 mb-1">
+                        Nombre del Vendedor / Promotor
+                      </label>
+                      <input
+                        type="text"
+                        value={newSellerInput}
+                        onChange={(e) => setNewSellerInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleAddSeller();
+                        }}
+                        placeholder="Ej. Carlos Ramírez / Promotora Lucía"
+                        className="w-full p-3 border-2 border-stone-300 focus:border-orange-500 rounded-xl text-sm font-bold"
+                      />
+                    </div>
+                    <div className="sm:col-span-4">
+                      <label className="block text-xs font-extrabold text-stone-700 mb-1">
+                        WhatsApp del Vendedor (Opcional)
+                      </label>
+                      <input
+                        type="tel"
+                        value={newSellerPhoneInput}
+                        onChange={(e) => setNewSellerPhoneInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleAddSeller();
+                        }}
+                        placeholder="Ej. 962654321"
+                        className="w-full p-3 border border-stone-300 rounded-xl text-sm font-semibold"
+                      />
+                    </div>
+                    <div className="sm:col-span-3">
+                      <button
+                        type="button"
+                        onClick={handleAddSeller}
+                        className="w-full py-3.5 px-4 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-black shadow flex items-center justify-center gap-1.5 transition"
+                      >
+                        <UserPlus className="w-4 h-4" />
+                        <span>+ Agregar a Firebase</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tarjetas de Vendedores con Botón de Link Exclusivo y Rendición */}
+                <div className="grid md:grid-cols-2 gap-4">
+                  {sellers.map((s) => {
+                    const sold = tickets.filter(
+                      (t) =>
+                        t.sellerName === s.name &&
+                        t.assignmentStatus !== "DISPONIBLE"
+                    );
+                    const paidCount = sold.filter(
+                      (t) => t.paymentStatus === "PAGADO"
+                    ).length;
+                    const reservedCount = sold.filter(
+                      (t) => t.paymentStatus !== "PAGADO"
+                    ).length;
+                    const pending = Math.max(
+                      0,
+                      s.cashInHandCents - s.settledCents
+                    );
+                    const exclusiveLink = getSellerExclusiveUrl(s.name);
+
+                    return (
+                      <div
+                        key={s.id}
+                        className="p-5 rounded-3xl border border-stone-200 bg-white shadow-sm flex flex-col justify-between gap-4"
+                      >
+                        <div className="flex justify-between items-start gap-2">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-black text-base text-stone-900">
+                                {s.name}
+                              </h3>
+                              {s.phone && (
+                                <span className="text-[11px] font-mono text-stone-500">
+                                  ({s.phone})
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-stone-600 mt-0.5">
+                              Tickets vendidos: <strong>{sold.length}</strong> (
+                              {paidCount} pagados • {reservedCount} separados)
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`px-2.5 py-1 rounded-lg text-xs font-black ${
+                                pending > 0
+                                  ? "bg-amber-200 text-amber-950"
+                                  : "bg-emerald-100 text-emerald-900"
+                              }`}
+                            >
+                              {pending > 0
+                                ? `Debe: ${formatPEN(pending)}`
+                                : "Al día ✓"}
+                            </span>
+                            {s.id !== "SEL-1" && (
+                              <button
+                                onClick={() => handleDeleteSeller(s.id)}
+                                title="Eliminar Vendedor"
+                                className="p-1.5 rounded-lg text-stone-400 hover:text-red-600 hover:bg-red-50"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Bloque de Link Exclusivo para su Celular */}
+                        <div className="p-3 rounded-2xl bg-stone-50 border border-stone-200 space-y-2">
+                          <span className="text-[10px] font-black uppercase text-stone-500 block">
+                            📲 Link Exclusivo para su Celular (Solo Venta de
+                            Tickets):
+                          </span>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(exclusiveLink);
+                                notify(
+                                  `Link exclusivo de ${s.name} copiado. Envíalo a su WhatsApp.`,
+                                  "success"
+                                );
+                              }}
+                              className="flex-1 py-2 px-3 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-xs font-black flex items-center justify-center gap-1.5"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>Copiar Link Vendedor</span>
+                            </button>
+
+                            <a
+                              href={`https://wa.me/${(s.phone || "").replace(
+                                /\D/g,
+                                ""
+                              )}?text=${encodeURIComponent(
+                                `🔥 *JCR EVENTOS - ${eventConfig.name}*\nHola *${s.name}*, entra a este enlace desde tu celular para vender tickets en vivo (está configurado solo con tu nombre):\n\n👉 ${exclusiveLink}`
+                              )}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center justify-center gap-1.5"
+                            >
+                              <Share2 className="w-3.5 h-3.5" />
+                              <span>Enviar por WhatsApp</span>
+                            </a>
+                          </div>
+                        </div>
+
+                        <div className="flex justify-between items-center pt-2 border-t border-stone-200 text-xs">
+                          <span>
+                            Cobrado en móvil:{" "}
+                            <strong>{formatPEN(s.cashInHandCents)}</strong> |
+                            Entregado:{" "}
+                            <strong>{formatPEN(s.settledCents)}</strong>
+                          </span>
+                          {pending > 0 && (
+                            <button
+                              onClick={() => handleSettleSellerCash(s.id)}
+                              className="px-3.5 py-2 rounded-xl bg-emerald-700 text-white font-black shadow"
+                            >
+                              🔒 Recibir {formatPEN(pending)}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ================================================================
+                PESTAÑA 6: CAJA, YAPE Y GANANCIA NETA
+            ================================================================= */}
+            {activeTab === "CAJA" && (
+              <div className="grid lg:grid-cols-12 gap-6">
+                <div className="lg:col-span-6 bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-4">
+                  <h2 className="text-xl font-black text-stone-900 border-b pb-3">
+                    1. Arqueo Exacto de Efectivo en Caja
+                  </h2>
+                  <div className="space-y-2.5 text-sm bg-stone-50 p-4 rounded-2xl border border-stone-200">
+                    <div className="flex justify-between">
+                      <span>Fondo Inicial para Vuelto:</span>
+                      <strong>{formatPEN(fondoInicialCajaCents)}</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>
+                        + Entradas en Efectivo (Polladas/Barra/Rendiciones):
+                      </span>
+                      <strong className="text-emerald-700">
+                        + {formatPEN(metrics.entradasEfectivoCajaCents)}
+                      </strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>− Gastos Pagados con Efectivo de Caja:</span>
+                      <strong className="text-red-600">
+                        − {formatPEN(metrics.salidasEfectivoCajaCents)}
+                      </strong>
+                    </div>
+                    <div className="border-t pt-2.5 flex justify-between text-base font-black">
+                      <span>Efectivo que DEBE HABER en Caja:</span>
+                      <span className="text-blue-900">
+                        {formatPEN(metrics.efectivoDisponibleCajaCents)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 space-y-2">
+                    <label className="block text-xs font-extrabold text-stone-800">
+                      Dinero físico contado en gaveta ahora mismo (S/):
+                    </label>
+                    <input
+                      type="number"
+                      step="0.50"
+                      value={(conteoFisicoRealCents / 100).toFixed(2)}
+                      onChange={(e) => {
+                        const cents = Math.round(
+                          (parseFloat(e.target.value) || 0) * 100
+                        );
+                        setConteoFisicoRealCents(cents);
+                        saveToCloud({ conteoFisicoRealCents: cents });
+                      }}
+                      className="w-full p-3 rounded-xl border border-amber-400 bg-white font-black text-lg text-center"
+                    />
+                    <div className="flex justify-between items-center text-sm font-black pt-1">
+                      <span>Diferencia de Caja:</span>
+                      <span
+                        className={
+                          metrics.diferenciaCajaCents === 0
+                            ? "text-emerald-800"
+                            : "text-red-700"
+                        }
+                      >
+                        {formatPEN(metrics.diferenciaCajaCents)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="lg:col-span-6 bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-4">
+                  <h2 className="text-xl font-black text-stone-900 border-b pb-3">
+                    2. Rentabilidad JCR EVENTOS y Dinero Digital (Yape/Plin)
+                  </h2>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="p-4 rounded-2xl bg-purple-50 border border-purple-200">
+                      <span className="text-[10px] font-black uppercase text-purple-800 block">
+                        Saldo Neto en Yape / Plin
+                      </span>
+                      <strong className="text-2xl font-black text-purple-900 mt-1 block">
+                        {formatPEN(metrics.saldoDisponibleYapeCents)}
+                      </strong>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200">
+                      <span className="text-[10px] font-black uppercase text-amber-800 block">
+                        Por Rendir Vendedores
+                      </span>
+                      <strong className="text-2xl font-black text-amber-900 mt-1 block">
+                        {formatPEN(metrics.faltaRendirVendedoresCents)}
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2.5 text-sm bg-emerald-50/70 p-4 rounded-2xl border border-emerald-200">
+                    <div className="flex justify-between">
+                      <span>+ Total Cobrado en Polladas:</span>
+                      <strong className="text-emerald-800">
+                        {formatPEN(metrics.cobradoTicketsCents)}
+                      </strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>+ Total Ventas de Barra:</span>
+                      <strong className="text-blue-800">
+                        {formatPEN(metrics.ingresosBarraCents)}
+                      </strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>− Total Compras y Gastos:</span>
+                      <strong className="text-red-700">
+                        − {formatPEN(metrics.gastosTotalesCents)}
+                      </strong>
+                    </div>
+                    <div className="border-t border-emerald-300 pt-2.5 flex justify-between text-lg font-black">
+                      <span>GANANCIA NETA ACTUAL:</span>
+                      <span className="text-emerald-950">
+                        {formatPEN(metrics.gananciaNetaCents)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ================================================================
+                PESTAÑA 7: HISTORIAL ANTIFRAUDE INMUTABLE
+            ================================================================= */}
+            {activeTab === "ANTIFRAUDE" && (
+              <div className="bg-white rounded-3xl shadow-sm border-2 border-stone-800 p-5 sm:p-6 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-stone-200 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 rounded-2xl bg-red-100 text-red-800">
+                      <ShieldAlert className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <span className="text-[11px] font-black uppercase tracking-wider text-red-700">
+                        Auditoría Inmutable JCR EVENTOS
+                      </span>
+                      <h2 className="text-xl font-black text-stone-900">
+                        Historial Antifraude de Todos los Movimientos
+                      </h2>
+                      <p className="text-xs text-stone-600">
+                        Aquí ves en tu laptop cada venta que tus vendedores
+                        hacen desde sus celulares en tiempo real.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      value={auditSearch}
+                      onChange={(e) => setAuditSearch(e.target.value)}
+                      placeholder="Buscar vendedor, ticket o cliente..."
+                      className="px-3 py-2 border rounded-xl text-xs font-bold"
+                    />
+                    <select
+                      value={auditFilter}
+                      onChange={(e) => setAuditFilter(e.target.value)}
+                      className="px-3 py-2 border rounded-xl text-xs font-black bg-stone-50"
+                    >
+                      <option value="TODOS">Todos los Movimientos</option>
+                      <option value="ALERTA">
+                        🚨 Solo Alertas / Anulaciones / Críticos
+                      </option>
+                      <option value="VENTA">💵 Ventas y Cobros</option>
+                      <option value="DESPACHO">🍗 Entregas de Cocina</option>
+                      <option value="GASTO">🍾 Barra y Gastos</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-2 max-h-[520px] overflow-y-auto pr-1 font-mono">
+                  {filteredAuditLogs.map((l) => {
+                    let boxStyle =
+                      "bg-stone-50 border-stone-200 text-stone-800";
+                    let badgeStyle = "bg-stone-200 text-stone-800";
+                    if (l.severity === "CRITICAL") {
+                      boxStyle = "bg-red-50 border-red-400 text-red-950";
+                      badgeStyle = "bg-red-700 text-white";
+                    } else if (l.severity === "WARNING") {
+                      boxStyle = "bg-amber-50 border-amber-400 text-amber-950";
+                      badgeStyle = "bg-amber-600 text-white";
+                    }
+
+                    return (
+                      <div
+                        key={l.id}
+                        className={`p-3.5 rounded-2xl border ${boxStyle} flex flex-wrap justify-between items-start gap-2 text-xs`}
+                      >
+                        <div className="space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className={`px-2 py-0.5 rounded font-black text-[10px] uppercase ${badgeStyle}`}
+                            >
+                              {l.category}
+                            </span>
+                            <strong className="font-black text-sm">
+                              {l.title}
+                            </strong>
+                          </div>
+                          <p className="text-xs opacity-90">{l.detail}</p>
+                        </div>
+                        <div className="text-right text-[11px] font-bold shrink-0">
+                          <div>🕒 {l.time}</div>
+                          <div className="text-orange-800">
+                            👤 {l.operator} ({l.device})
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ================================================================
+                PESTAÑA 8: CONFIGURACIÓN MAESTRA DEL NEGOCIO
+            ================================================================= */}
+            {activeTab === "CONFIG" && (
+              <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-5 sm:p-6 space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
+                  <div>
+                    <h2 className="text-xl font-black text-stone-900">
+                      Configuración Maestra — JCR EVENTOS (Huánuco)
+                    </h2>
+                    <p className="text-xs text-stone-600">
+                      Protegido con Clave Maestra para que ningún vendedor
+                      altere precios ni cantidades.
+                    </p>
+                  </div>
+                  <span
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black ${
+                      isMasterUnlocked
+                        ? "bg-emerald-100 text-emerald-900"
+                        : "bg-red-100 text-red-900"
+                    }`}
+                  >
+                    {isMasterUnlocked
+                      ? "🔓 MODO ADMINISTRADOR ACTIVO"
+                      : "🔒 BLOQUEADO (Toca Clave Maestra arriba)"}
+                  </span>
+                </div>
+
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-extrabold text-stone-700 mb-1">
+                      Nombre del Evento (JCR EVENTOS)
+                    </label>
+                    <input
+                      type="text"
+                      value={eventConfig.name}
+                      onChange={(e) => {
+                        if (!requireMasterAuth("Editar Nombre")) return;
+                        const next = { ...eventConfig, name: e.target.value };
+                        setEventConfig(next);
+                        saveToCloud({ eventConfig: next });
+                      }}
+                      className="w-full p-3 border rounded-xl text-sm font-bold"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-extrabold text-stone-700 mb-1">
+                      Dirección en Huánuco
+                    </label>
+                    <input
+                      type="text"
+                      value={eventConfig.address}
+                      onChange={(e) => {
+                        if (!requireMasterAuth("Editar Dirección")) return;
+                        const next = {
+                          ...eventConfig,
+                          address: e.target.value,
+                        };
+                        setEventConfig(next);
+                        saveToCloud({ eventConfig: next });
+                      }}
+                      className="w-full p-3 border rounded-xl text-sm font-bold"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-extrabold text-stone-700 mb-1">
+                      Precio por Pollada (S/)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.50"
+                      value={(eventConfig.unitPriceCents / 100).toFixed(2)}
+                      onChange={(e) => {
+                        if (!requireMasterAuth("Cambiar Precio")) return;
+                        const cents = Math.round(
+                          (parseFloat(e.target.value) || 15) * 100
+                        );
+                        const nextCfg = {
+                          ...eventConfig,
+                          unitPriceCents: cents,
+                        };
+                        const nextT = tickets.map((t) =>
+                          t.assignmentStatus === "DISPONIBLE"
+                            ? { ...t, agreedPriceCents: cents }
+                            : t
+                        );
+                        setEventConfig(nextCfg);
+                        setTickets(nextT);
+                        saveToCloud({ eventConfig: nextCfg, tickets: nextT });
+                      }}
+                      className="w-full p-3 border rounded-xl text-sm font-black"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-extrabold text-stone-700 mb-1">
+                      Platos / Pollos en Cocina
+                    </label>
+                    <input
+                      type="number"
+                      value={pollosRecibidos}
+                      onChange={(e) => {
+                        if (!requireMasterAuth("Cambiar Stock Cocina")) return;
+                        const val =
+                          parseInt(e.target.value || "250", 10) || 250;
+                        setPollosRecibidos(val);
+                        saveToCloud({ pollosRecibidos: val });
+                      }}
+                      className="w-full p-3 border rounded-xl text-sm font-black"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-extrabold text-stone-700 mb-1">
+                      Fondo Inicial de Caja (S/)
+                    </label>
+                    <input
+                      type="number"
+                      value={(fondoInicialCajaCents / 100).toFixed(2)}
+                      onChange={(e) => {
+                        if (!requireMasterAuth("Cambiar Fondo de Caja")) return;
+                        const cents = Math.round(
+                          (parseFloat(e.target.value) || 0) * 100
+                        );
+                        setFondoInicialCajaCents(cents);
+                        saveToCloud({ fondoInicialCajaCents: cents });
+                      }}
+                      className="w-full p-3 border rounded-xl text-sm font-black"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-extrabold text-stone-700 mb-1">
+                      Cambiar Clave Maestra (Actual:{" "}
+                      {isMasterUnlocked ? masterPin : "••••"})
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        value={newMasterPinInput}
+                        onChange={(e) => setNewMasterPinInput(e.target.value)}
+                        placeholder="Nuevo PIN..."
+                        className="w-full p-3 border rounded-xl text-sm font-bold"
+                      />
+                      <button
+                        onClick={() => {
+                          if (!requireMasterAuth("Cambiar Clave Maestra"))
+                            return;
+                          if (newMasterPinInput.trim().length < 4) {
+                            notify(
+                              "La nueva Clave Maestra debe tener al menos 4 dígitos.",
+                              "warning"
+                            );
+                            return;
+                          }
+                          const nextPin = newMasterPinInput.trim();
+                          setMasterPin(nextPin);
+                          setNewMasterPinInput("");
+                          saveToCloud({ masterPin: nextPin });
+                          notify(
+                            "Clave Maestra actualizada con éxito.",
+                            "success"
+                          );
+                        }}
+                        className="px-4 rounded-xl bg-stone-900 text-white text-xs font-black"
+                      >
+                        Guardar PIN
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </main>
+
+          {/* NAVEGACIÓN INFERIOR MÓVIL/TABLET (Solo cuando estás en Panel Completo) */}
+          <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-stone-300 shadow-2xl z-40 grid grid-cols-6">
+            {[
+              { id: "VENDER", label: "Vender", icon: Ticket },
+              { id: "PADRON", label: "250 Tkt", icon: QrCode },
+              { id: "DESPACHO", label: "Cocina", icon: Utensils },
+              { id: "VENDEDORES", label: "Vendedores", icon: Users },
+              { id: "CAJA", label: "Caja", icon: Wallet },
+              { id: "ANTIFRAUDE", label: "Auditoría", icon: ShieldAlert },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const isAct = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex flex-col items-center justify-center py-2 text-[10px] font-black transition ${
+                    isAct
+                      ? "text-orange-700 bg-orange-50 border-t-2 border-orange-600"
+                      : "text-stone-500"
+                  }`}
+                >
+                  <Icon className="w-4 h-4 mb-0.5" />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </>
+      )}
 
       {/* MODAL CLAVE MAESTRA */}
       {showMasterModal && (
@@ -3133,7 +4032,7 @@ export default function MiPolladaHuanucoApp() {
               <div className="flex items-center gap-2">
                 <Lock className="w-5 h-5 text-orange-600" />
                 <h3 className="font-black text-lg text-stone-900">
-                  Clave Maestra Administrador
+                  Clave Maestra JCR EVENTOS
                 </h3>
               </div>
               <button
@@ -3144,8 +4043,8 @@ export default function MiPolladaHuanucoApp() {
               </button>
             </div>
             <p className="text-xs text-stone-600">
-              Ingresa el PIN Maestro para autorizar cambios administrativos,
-              anulaciones o rendiciones de dinero.{" "}
+              Ingresa el PIN Maestro para abrir el Panel de Control Completo de
+              Laptop o autorizar cambios administrativos.{" "}
               <span className="text-stone-400">(PIN inicial: 2026)</span>
             </p>
             <input
@@ -3153,6 +4052,9 @@ export default function MiPolladaHuanucoApp() {
               inputMode="numeric"
               value={masterPinInput}
               onChange={(e) => setMasterPinInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleVerifyMasterPin();
+              }}
               placeholder="••••"
               className="w-full p-3.5 border-2 border-stone-300 rounded-2xl text-center font-mono font-black text-2xl tracking-widest"
             />
@@ -3180,7 +4082,7 @@ export default function MiPolladaHuanucoApp() {
           <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl">
             <div className="flex justify-between items-center border-b pb-3">
               <h3 className="font-black text-lg text-stone-900">
-                Crear Nueva Actividad / Pollada
+                Crear Nueva Actividad — JCR EVENTOS
               </h3>
               <button
                 onClick={() => setShowNewEventModal(false)}
@@ -3193,7 +4095,7 @@ export default function MiPolladaHuanucoApp() {
               type="text"
               value={newEventTitleInput}
               onChange={(e) => setNewEventTitleInput(e.target.value)}
-              placeholder="Ej. Pollada Bailable Fin de Mes - Huánuco"
+              placeholder="Ej. Gran Pollada JCR EVENTOS - Noviembre"
               className="w-full p-3 border rounded-xl text-sm font-bold"
             />
             <div className="flex justify-end gap-2">
@@ -3220,7 +4122,7 @@ export default function MiPolladaHuanucoApp() {
           <div className="bg-white rounded-3xl max-w-2xl w-full p-6 space-y-4 shadow-2xl max-h-[85vh] flex flex-col">
             <div className="flex justify-between items-center border-b pb-3">
               <h3 className="font-black text-lg text-stone-900">
-                Exportar Reportes Oficiales (Excel / CSV)
+                Exportar Reportes JCR EVENTOS (Excel / CSV)
               </h3>
               <button
                 onClick={() => setShowExportModal(false)}
@@ -3268,35 +4170,6 @@ export default function MiPolladaHuanucoApp() {
           </div>
         </div>
       )}
-
-      {/* NAVEGACIÓN INFERIOR MÓVIL */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-stone-300 shadow-2xl z-40 grid grid-cols-6">
-        {[
-          { id: "VENDER", label: "Vender", icon: Ticket },
-          { id: "PADRON", label: "250 Tkt", icon: QrCode },
-          { id: "DESPACHO", label: "Cocina", icon: Utensils },
-          { id: "GASTOS", label: "Barra", icon: ShoppingBag },
-          { id: "CAJA", label: "Caja", icon: Wallet },
-          { id: "ANTIFRAUDE", label: "Auditoría", icon: ShieldAlert },
-        ].map((tab) => {
-          const Icon = tab.icon;
-          const isAct = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex flex-col items-center justify-center py-2 text-[10px] font-black transition ${
-                isAct
-                  ? "text-orange-700 bg-orange-50 border-t-2 border-orange-600"
-                  : "text-stone-500"
-              }`}
-            >
-              <Icon className="w-4 h-4 mb-0.5" />
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
-      </nav>
     </div>
   );
 }
