@@ -2105,6 +2105,11 @@ export default function JcrEventosPolladaApp() {
                     <Download className="w-3.5 h-3.5 text-orange-600" />
                     <span className="hidden sm:inline">Excel</span>
                   </button>
+                </>
+              )}
+            </div>
+          </div>
+
           {/* Menú de Módulos SOLO visible cuando estás en PANEL_COMPLETO (Laptop) */}
           {viewMode === "PANEL_COMPLETO" && (
             <nav className="hidden lg:flex items-center gap-1.5 mt-3 pt-2.5 border-t border-white/10 overflow-x-auto">
